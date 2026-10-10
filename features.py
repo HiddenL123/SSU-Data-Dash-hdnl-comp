@@ -1,23 +1,50 @@
-"""EDIT ME: turn a table of homes into numbers a model can learn from.
-
-Each function gets a table of homes with the columns of its test file (so never
-sold_price or date_sold) and returns a table of numbers, one row per home.
-FeatureModel in models.py uses them; switch it on in make_model() to try your features.
-
-Ideas to try:
-- lot size: lot_front * lot_depth (empty for condos, which is fine for tree models)
-- garage, house_style, municipality
-- how pricey a community is: the median price per square foot of its past sales
-  (work it out from the training sales only, never from the homes you predict)
-- how prices have moved recently in the area or for that property type
-- words in the remarks, such as "renovated" or "needs work"
-- off-market and list-aware can use different features: list-aware has list_price
-"""
 import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler
 
-PROPERTY_TYPES = ["Condo Apt", "Detached", "Semi-Detached", "Condo Townhouse",
-                  "Freehold Townhouse", "Co-Op Apt"]
+"""
+NOTE: This is the non-example features.py for feature extraction purposes for the main model. For example features, see ex_features.py.
 
+[ ] Word extraction
+[ ] Spatial features
+
+"""
+
+nominal_features = ['house_type_name', 'house_style', 'municipality', 'community']
+
+
+def do_bag_of_words(df, column="remarks"):
+    """A simple bag-of-words representation of the remarks text.
+    Returns a table with one row per home and one column per word.
+    Each cell is 1 if the word appears in that home's remarks, else 0.
+    """
+    # Split each remark into words, lowercase them, and remove punctuation.
+    remarks = df[column]
+    words = remarks.str.lower().str.replace(r"[^\w\s]", " ", regex=True).str.split()
+    # Get the set of all words that appear anywhere.
+    vocab = sorted(set(word for row in words for word in row))
+    # Replaces remarks with columns for each word, with 1 if the word appears in that home's remarks, else 0.
+    bag_of_words = pd.DataFrame(0, index=df.index, columns=vocab)
+    # Fill in 1s where the word appears in that home's remarks.
+    for i, row in words.items():
+        bag_of_words.loc[i, row] = 1
+    return bag_of_words
+
+def tf_idf(df, column="remarks"):
+    """
+    A simple TF-IDF representation of the remarks text.
+    Returns a table with one row per home and one column per word.
+    Each cell is the TF-IDF score for that word in that home's remarks.
+    TF-IDF is a measure of how important a word is to a document in a collection
+    """
+    bow = do_bag_of_words(df, column)
+    # Term frequency (TF): number of times each word appears in each home's remarks.
+    tf = bow.div(bow.sum(axis=1), axis=0)
+    # Inverse document frequency (IDF): log of the total number of homes divided by the number of homes that contain each word.
+    idf = np.log(len(df) / (bow > 0).sum(axis=0))
+    # TF-IDF: multiply TF by IDF for each word.
+    tf_idf = tf.mul(idf, axis=1)
+    return tf_idf
 
 def square_feet(house_area):
     """house_area is text, either one number ("622") or a range ("900-1099").
@@ -28,20 +55,39 @@ def square_feet(house_area):
     return (low + high) / 2
 
 
+def spatial_features(df, target_col, lat_col="latitude", lon_col="longitude"):
+    """Creates spatial interaction features based on latitude and longitude."""
+    return df[[lat_col, lon_col]].copy()
+
+
 def off_market_features(homes):
-    """Features for homes with no list price."""
+    """Features for homes with no list price.
+    NOTE: Does not include most variable
+    """
     X = pd.DataFrame(index=homes.index)
+
+    """
+    Numeric features
+    """
+
     X["square_feet"] = square_feet(homes["house_area"])
     X["bedrooms"] = homes["bedrooms"]
     X["washrooms"] = homes["washrooms"]
     X["parking"] = homes["parking_total"]
     X["latitude"] = homes["latitude"]
     X["longitude"] = homes["longitude"]
-    # Months since January 2021, so the model can follow prices over time.
+
+
+    #X = X.concat([X, do_bag_of_words(homes, column="remarks")], axis=1)
+    X = X.concat([X, tf_idf(homes, column="remarks")], axis=1)
+
+    
+    # One 0/1 column per nominal feature value
+    for feature in nominal_features:
+        for kind in homes[feature].unique():
+            X[f"{feature}_{kind}"] = (homes[feature] == kind).astype(int)
+
     X["months"] = (homes["date_listed"] - pd.Timestamp("2021-01-01")).dt.days / 30.44
-    # One 0/1 column per property type.
-    for kind in PROPERTY_TYPES:
-        X["is_" + kind] = (homes["house_type_name"] == kind).astype(int)
     return X
 
 

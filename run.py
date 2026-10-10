@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 import data
-import models
+import ex_models
 from check_submission import check_all
 
 ROOT = Path(__file__).parent
@@ -32,7 +32,7 @@ def validate():
         train = listings[listings["date_sold"] < month.start_time]
         homes = listings[listings["date_sold"].dt.to_period("M") == month]
         for track in TRACKS:
-            model = models.make_model(track).fit(train)
+            model = ex_models.make_model(track).fit(train)
             predicted = model.predict(data.hide_answers(homes, track))
             results.append(pd.DataFrame({
                 "ml_num": homes["ml_num"], "track": track, "month": str(month),
@@ -155,7 +155,7 @@ def predict():
     (ROOT / "submissions").mkdir(exist_ok=True)
     for track in TRACKS:
         homes = data.load(track)
-        model = models.make_model(track).fit(listings)
+        model = ex_models.make_model(track).fit(listings)
         predicted = model.predict(homes)
         path = ROOT / "submissions" / f"submission_{track}.csv"
         pd.DataFrame({"ml_num": homes["ml_num"], "predicted_price": np.round(predicted)}).to_csv(path, index=False)
