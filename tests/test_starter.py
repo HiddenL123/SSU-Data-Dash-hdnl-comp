@@ -9,7 +9,51 @@ import pytest
 import check_submission
 import data
 import ex_models
+import features
 import run
+
+
+def test_bag_of_words_handles_repeated_words_and_duplicate_index_labels():
+    remarks = pd.DataFrame(
+        {"remarks": [
+            "home home condo",
+            "home condo condo",
+            "spacious garden",
+            "modern kitchen",
+            "bright room",
+            "quiet street",
+            "large yard",
+            "updated bath",
+            "corner lot",
+            "sunny deck",
+        ]},
+        index=[7, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    )
+
+    result = features.do_bag_of_words(remarks)
+
+    assert result.index.tolist() == [7, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    assert result.loc[7, "bow_home"].tolist() == [1, 1]
+    assert result.loc[7, "bow_condo"].tolist() == [1, 1]
+
+
+def test_text_features_fit_vectorizers_before_transforming():
+    remarks = pd.DataFrame({
+        "remarks": [
+            "spacious condo balcony",
+            "large detached home garden",
+            "updated condo parking",
+            "quiet detached home",
+        ]
+    })
+
+    bow = features.do_bag_of_words(remarks)
+    tfidf = features.tf_idf(remarks)
+
+    assert len(bow) == len(remarks)
+    assert len(tfidf) == len(remarks)
+    assert all(column.startswith("bow_") for column in bow.columns)
+    assert all(column.startswith("tfidf_") for column in tfidf.columns)
 
 
 def make_listings(n, seed=0, first_id=0):
@@ -41,6 +85,41 @@ def make_listings(n, seed=0, first_id=0):
         "external_avm_estimate_date": sold,
         "remarks": "A home.",
     })
+
+
+def test_load_prefers_local_csv_without_DATA_DIR(tmp_path, monkeypatch):
+    folder = tmp_path / "data"
+    folder.mkdir()
+    source = pd.DataFrame({
+        "ml_num": ["SYN-0000001"],
+        "date_sold": ["2025-01-15"],
+    })
+    path = folder / "listings.csv"
+    source.to_csv(path, index=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.setattr(data, "LOCAL_DATA_DIR", folder)
+
+    loaded = data.load("listings")
+
+    assert data.find_file("listings") == path
+    assert len(loaded) == 1
+    assert loaded.loc[0, "date_sold"] == pd.Timestamp("2025-01-15")
+
+
+def test_load_sample_returns_n_repeatable_random_rows(tmp_path, monkeypatch):
+    folder = tmp_path / "data"
+    folder.mkdir()
+    source = pd.DataFrame({"ml_num": [f"SYN-{i:07d}" for i in range(20)]})
+    source.to_csv(folder / "listings.csv", index=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.setattr(data, "LOCAL_DATA_DIR", folder)
+
+    first = data.load_sample("listings", n=5, random_state=42)
+    second = data.load_sample("listings", n=5, random_state=42)
+
+    assert len(first) == 5
+    assert first.index.is_unique
+    pd.testing.assert_frame_equal(first, second)
 
 
 # ---- the nearest-sales baseline never looks into the future ----

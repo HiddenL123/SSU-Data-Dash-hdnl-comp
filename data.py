@@ -1,8 +1,8 @@
 """Load the competition data.
 
-By default the files are downloaded once from Hugging Face and kept in a cache on
-your computer, so later runs are instant. If you already have the files in a folder,
-point DATA_DIR at that folder instead and nothing is downloaded:
+Files in the project's data/ folder are used first. Otherwise, files are downloaded
+once from Hugging Face and kept in a cache on your computer. You can also point
+DATA_DIR at another folder containing the files:
 
     macOS / Linux:       DATA_DIR=/path/to/folder python run.py validate
     Windows PowerShell:  $env:DATA_DIR = "C:/path/to/folder"; python run.py validate
@@ -18,6 +18,7 @@ FILE_NAMES = {
     "off_market": "test_off_market",   # homes to value with no list price
     "list_aware": "test_list_aware",   # homes to value that do have a list price
 }
+LOCAL_DATA_DIR = Path(__file__).parent / "data"
 DATE_COLUMNS = ["date_listed", "date_sold", "external_avm_estimate_date"]
 
 # Columns the test files do not have: they are only known once a home has sold.
@@ -35,14 +36,15 @@ The error from Hugging Face was: {error}
 
 
 def find_file(name):
-    """Return the path of one data file, downloading it the first time."""
+    """Return a local data file or download it from Hugging Face if needed."""
     stem = FILE_NAMES[name]
     folder = os.environ.get("DATA_DIR")
+    data_dir = Path(folder) if folder else LOCAL_DATA_DIR
+    for ending in (".parquet", ".csv"):
+        path = data_dir / (stem + ending)
+        if path.exists():
+            return path
     if folder:
-        for ending in (".parquet", ".csv"):
-            path = Path(folder) / (stem + ending)
-            if path.exists():
-                return path
         raise FileNotFoundError(f"DATA_DIR is {folder}, but {stem}.parquet or {stem}.csv is not in it.")
 
     from huggingface_hub import hf_hub_download

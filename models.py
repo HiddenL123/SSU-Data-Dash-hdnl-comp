@@ -7,60 +7,146 @@
 make_model() picks the model for each track. The two starting models are baselines:
 deliberately simple, so you can measure how much your own ideas add.
 """
+from catboost import train
 import numpy as np
+import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.linear_model import ElasticNet
 
-import ex_features
 
 
 def make_model(track):
-    """Return a fresh, untrained model for "off_market" or "list_aware"."""
+    """Return a fresh, untrained model."""
+
+    if track == "off_market":
+        return OffMarketModel()
+
     if track == "list_aware":
-        #return ListPriceBaseline()
-        pass
-    pass
+        return ListingAdjustedModel()
 
-class NearestSalesBaseline:
-    """Off-market baseline: the median sold price of the k nearest earlier sales of
-    the same property type.
+    raise ValueError(f"Unknown track: {track}")
 
-    "Nearest" means closest by latitude and longitude. "Earlier" means sold before the
-    home was listed, so the model never looks into the future, even when the
-    training table holds later sales. It makes no adjustment for size, condition or
-    for prices moving since those sales: improving on that is your job.
-    """
+class PropertyModel:
+    """Property-price regression component f(X)."""
 
-    def __init__(self, k=10):
-        self.k = k
+    def __init__(self, alpha=0.01, l1_ratio=0.8):
+        self.model = ElasticNet(
+            alpha=alpha,
+            l1_ratio=l1_ratio,
+            max_iter=20000,
+            random_state=0
+        )
+
+        self.feature_names = None
+
+    def fit(self, X, y):
+        """X: processed features, y: actual sold prices."""
+
+        self.feature_names = X.columns.copy()
+
+        self.model.fit(X, np.log(y))
+
+        return self
+
+    def predict_log(self, X):
+        """Return predicted log sold prices."""
+        return self.model.predict(X)
+
+    def predict(self, X):
+        """Return predicted sold prices."""
+        return np.exp(self.predict_log(X))
+
+    def selected_features(self):
+        """Return nonzero coefficients sorted by magnitude."""
+
+        coefs = pd.Series(
+            self.model.coef_,
+            index=self.feature_names
+        )
+
+        selected = coefs[coefs.abs() > 1e-8]
+
+        return selected.reindex(
+            selected.abs().sort_values(
+                ascending=False
+            ).index
+        )
+
+class OffMarketModel:
+
+    def __init__(self):
+        self.property_model = PropertyModel()
+        self.spatial_model = SpatialModel()
+        self.temporal_model = TemporalModel()
+        self.interaction_model = InteractionModel()
+
+    def fit(self, X, p, t, y):
+        # Joint or carefully staged training
+        ...
+        return self
+
+    def predict_log(self, X, p, t):
+        return (
+            self.property_model.predict_log(X)
+            + self.spatial_model.predict(p)
+            + self.temporal_model.predict(t)
+            + self.interaction_model.predict(X, p, t)
+        )
+
+    def predict(self, X, p, t):
+        return np.exp(self.predict_log(X, p, t))
+
+
+class OffMarketModel:
+    """Stage 1: predict log sold price from property features."""
+
+    def __init__(self, alpha=0.01, l1_ratio=0.8):
+        self.model = ElasticNet(
+            alpha=alpha,
+            l1_ratio=l1_ratio,
+            max_iter=20000,
+            random_state=0
+        )
+        self.feature_state = None
+        self.feature_names = None
 
     def fit(self, train):
-        columns = ["ml_num", "house_type_name", "date_sold", "latitude", "longitude", "sold_price"]
-        # Newest sales first, so when several sales are equally near (a condo
-        # building shares one location), the most recent ones are picked.
-        self.sales = train[columns].sort_values(["date_sold", "ml_num"], ascending=[False, True])
-        self.sales_by_type = dict(list(self.sales.groupby("house_type_name")))
+        X, self.feature_state = features.sci_kit_learn_df(train)
+
+        y = np.log(train["sold_price"].to_numpy())
+
+        self.model.fit(X, y)
+        self.feature_names = X.columns
+
         return self
 
     def predict(self, homes):
-        return np.array([self.predict_one(home) for _, home in homes.iterrows()])
+        X, _ = features.sci_kit_learn_df(
+            homes,
+            state=self.feature_state
+        )
 
-    def predict_one(self, home):
-        sales = self.sales_by_type.get(home["house_type_name"], self.sales)
-        earlier = sales[sales["date_sold"] < home["date_listed"]]
-        if len(earlier) == 0:   # no earlier sale of this type: use every type
-            earlier = self.sales[self.sales["date_sold"] < home["date_listed"]]
+        log_predictions = self.model.predict(X)
 
-        # Distance in degrees. In Toronto a degree of longitude is only 0.72 times as
-        # long as a degree of latitude (0.72 = cosine of 43.7 degrees north).
-        dx = (earlier["longitude"].to_numpy() - home["longitude"]) * 0.72
-        dy = earlier["latitude"].to_numpy() - home["latitude"]
-        distance = np.sqrt(dx ** 2 + dy ** 2)
+        return np.exp(log_predictions)
 
-        nearest = np.argsort(distance, kind="stable")[: self.k]
-        return float(np.median(earlier["sold_price"].to_numpy()[nearest]))
+    def selected_features(self):
+        """Return nonzero coefficients, sorted by magnitude."""
+        coefs = pd.Series(
+            self.model.coef_,
+            index=self.feature_names
+        )
+
+        selected = coefs[coefs.abs() > 1e-8]
+
+        return selected.reindex(
+            selected.abs().sort_values(
+                ascending=False
+            ).index
+        )
 
 
-class FeatureModel:
+class ListingAdjustedModel:
     """A machine-learning model (gradient-boosted trees) on the features in features.py.
 
     It learns log(price) rather than price, so a 10% miss on a cheap condo counts
@@ -78,3 +164,37 @@ class FeatureModel:
 
     def predict(self, homes):
         return np.exp(self.model.predict(self.make_features(homes)))
+
+if __name__ == "__main__":
+    import features
+    import data
+    homes = data.load("listings")
+    homes = homes.sort_values("date_sold")
+
+    # 80/20 split
+    split = int(len(homes) * 0.8)
+
+    train = homes.iloc[:split].copy()
+    valid = homes.iloc[split:].copy()
+
+
+    X_train, feature_state = features.sci_kit_learn_df(train)
+    X_valid, _ = features.sci_kit_learn_df(
+        valid,
+        state=feature_state
+    )
+    model = PropertyModel()
+    model.fit(X_train, train["sold_price"])
+
+    #print(model.selected_features())
+    #print("Selected:", len(model.selected_features()))
+    row_number = 0
+    selected = model.selected_features()
+    row = X_valid.iloc[row_number]
+
+    print(f"Row {row_number} (ml_num={valid.iloc[row_number]['ml_num']}):")
+    print(pd.DataFrame({
+        "value": row[selected.index],
+        "coefficient": selected,
+        "contribution": row[selected.index] * selected
+    }).to_string())

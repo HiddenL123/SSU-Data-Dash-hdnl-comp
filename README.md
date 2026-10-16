@@ -19,9 +19,19 @@ Python 3.10 or newer (3.11+ on macOS 27):
 pip install -r requirements.txt
 ```
 
-The data downloads itself on first use. No Python? Use the
+Data files in the project `data/` folder are used automatically, so you can keep
+local copies there and avoid repeated Hugging Face requests. If those files are
+missing, the data downloads itself on first use. No Python? Use the
 [Colab notebook](https://colab.research.google.com/github/erwinzhang7/SSU-Data-Dash/blob/main/notebooks/quickstart.ipynb).
 Prefer R? See `r/baseline.R`.
+
+For a smaller, repeatable dataset while testing features or models:
+
+```python
+import data
+
+homes = data.load_sample("listings", n=1000, random_state=42)
+```
 
 ## Commands
 

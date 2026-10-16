@@ -1,6 +1,9 @@
+from os import name
+
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 
 """
 NOTE: This is the non-example features.py for feature extraction purposes for the main model. For example features, see ex_features.py.
@@ -10,41 +13,60 @@ NOTE: This is the non-example features.py for feature extraction purposes for th
 
 """
 
-nominal_features = ['house_type_name', 'house_style', 'municipality', 'community']
+nominal_features = [
+    "house_type_name",
+    "house_style",
+    "municipality",
+    "community",
+]
 
+numeric_features = [
+    "square_feet",
+    "bedrooms",
+    "washrooms",
+    "parking",
+    "garage",
+    "lot_front",
+    "lot_depth",
+    "lot_area",
+]
 
+# ---------------------------------------------------------------------------------------------------------------
+# X feature extraction
+# ---------------------------------------------------------------------------------------------------------------
 def do_bag_of_words(df, column="remarks"):
-    """A simple bag-of-words representation of the remarks text.
-    Returns a table with one row per home and one column per word.
-    Each cell is 1 if the word appears in that home's remarks, else 0.
-    """
-    # Split each remark into words, lowercase them, and remove punctuation.
-    remarks = df[column]
-    words = remarks.str.lower().str.replace(r"[^\w\s]", " ", regex=True).str.split()
-    # Get the set of all words that appear anywhere.
-    vocab = sorted(set(word for row in words for word in row))
-    # Replaces remarks with columns for each word, with 1 if the word appears in that home's remarks, else 0.
-    bag_of_words = pd.DataFrame(0, index=df.index, columns=vocab)
-    # Fill in 1s where the word appears in that home's remarks.
-    for i, row in words.items():
-        bag_of_words.loc[i, row] = 1
-    return bag_of_words
+    """Returns a DataFrame of binary word indicators."""
+    vectorizer = CountVectorizer(
+        binary=True,
+        min_df=0.001,
+        max_df=0.90,
+        max_features=1000,
+        dtype=np.float32,
+    )
+    matrix = vectorizer.fit_transform(df[column].fillna(""))
+
+    return pd.DataFrame(
+        matrix.toarray(),
+        columns=["bow_" + w for w in vectorizer.get_feature_names_out()],
+        index=df.index
+    )
 
 def tf_idf(df, column="remarks"):
-    """
-    A simple TF-IDF representation of the remarks text.
-    Returns a table with one row per home and one column per word.
-    Each cell is the TF-IDF score for that word in that home's remarks.
-    TF-IDF is a measure of how important a word is to a document in a collection
-    """
-    bow = do_bag_of_words(df, column)
-    # Term frequency (TF): number of times each word appears in each home's remarks.
-    tf = bow.div(bow.sum(axis=1), axis=0)
-    # Inverse document frequency (IDF): log of the total number of homes divided by the number of homes that contain each word.
-    idf = np.log(len(df) / (bow > 0).sum(axis=0))
-    # TF-IDF: multiply TF by IDF for each word.
-    tf_idf = tf.mul(idf, axis=1)
-    return tf_idf
+    """Returns a DataFrame of TF-IDF features."""
+    vectorizer = TfidfVectorizer(
+        min_df=0.001,
+        max_df=0.90,
+        max_features=1000,
+        ngram_range=(1, 2),
+        dtype=np.float32,
+    )
+    matrix = vectorizer.fit_transform(df[column].fillna(""))
+
+    return pd.DataFrame(
+        matrix.toarray(),
+        columns=["tfidf_" + w for w in vectorizer.get_feature_names_out()],
+        index=df.index
+    )
 
 def square_feet(house_area):
     """house_area is text, either one number ("622") or a range ("900-1099").
@@ -55,44 +77,108 @@ def square_feet(house_area):
     return (low + high) / 2
 
 
-def spatial_features(df, target_col, lat_col="latitude", lon_col="longitude"):
-    """Creates spatial interaction features based on latitude and longitude."""
-    return df[[lat_col, lon_col]].copy()
 
+def sci_kit_learn_df(homes, state=None):
+    """Features for homes with no list price."""
 
-def off_market_features(homes):
-    """Features for homes with no list price.
-    NOTE: Does not include most variable
-    """
+    fit = state is None
+
+    if fit:
+        state = {
+            "vectorizer": TfidfVectorizer(
+                min_df=0.002,
+                max_df=0.90,
+                max_features=1000,
+                ngram_range=(1, 2),
+                dtype=np.float32
+            ),
+            "scaler": StandardScaler()
+        }
+
     X = pd.DataFrame(index=homes.index)
 
-    """
-    Numeric features
-    """
-
+    # Numeric features
     X["square_feet"] = square_feet(homes["house_area"])
     X["bedrooms"] = homes["bedrooms"]
     X["washrooms"] = homes["washrooms"]
     X["parking"] = homes["parking_total"]
-    X["latitude"] = homes["latitude"]
-    X["longitude"] = homes["longitude"]
+
+    # Impute missing values using training statistics
+    if fit:
+        state["medians"] = X.median()
+
+    X = X.fillna(state["medians"]).fillna(0)
+
+    # TF-IDF features
+    remarks = homes["remarks"].fillna("").astype(str)
+
+    if fit:
+        text = state["vectorizer"].fit_transform(remarks)
+    else:
+        text = state["vectorizer"].transform(remarks)
+
+    text = pd.DataFrame(
+        text.toarray(),
+        columns=[
+            "tfidf_" + word
+            for word in state["vectorizer"].get_feature_names_out()
+        ],
+        index=homes.index
+    )
+
+    X = pd.concat([X, text], axis=1)
+
+    # Nominal features
+    X = pd.concat([
+        X,
+        pd.get_dummies(
+            homes[nominal_features].fillna("Unknown"),
+            prefix=nominal_features,
+            dtype=np.float32
+        )
+    ], axis=1)
+
+    # Match training columns
+    if fit:
+        state["columns"] = X.columns.tolist()
+    else:
+        X = X.reindex(
+            columns=state["columns"],
+            fill_value=0
+        )
+
+    # Standardization
+    if fit:
+        values = state["scaler"].fit_transform(X)
+    else:
+        values = state["scaler"].transform(X)
+
+    X = pd.DataFrame(
+        values,
+        columns=X.columns,
+        index=X.index
+    )
+
+    return X, state
 
 
-    #X = X.concat([X, do_bag_of_words(homes, column="remarks")], axis=1)
-    X = X.concat([X, tf_idf(homes, column="remarks")], axis=1)
+def list_aware_skl(homes):
+    """Features for homes that have a list price: everything above, plus the list price."""
+    X, scaler = sci_kit_learn_df(homes)
+    X["list_price"] = homes["list_price"]
+    return X, scaler
+
+def load_sample(df, n, random_state=None):
+    """Load a dataset and return n random rows, optionally with a reproducible seed."""
+    return df.sample(n=n, random_state=random_state)
+
+if __name__ == "__main__":
+    import data
+    homes = data.load("listings")
+    #print(homes.groupby("house_type_name")[["lot_front", "lot_depth"]].apply(lambda x: x.isna().sum()))
+
+
+    X, scaler = sci_kit_learn_df(homes)
+    print(X.columns.tolist())
 
     
-    # One 0/1 column per nominal feature value
-    for feature in nominal_features:
-        for kind in homes[feature].unique():
-            X[f"{feature}_{kind}"] = (homes[feature] == kind).astype(int)
-
-    X["months"] = (homes["date_listed"] - pd.Timestamp("2021-01-01")).dt.days / 30.44
-    return X
-
-
-def list_aware_features(homes):
-    """Features for homes that have a list price: everything above, plus the list price."""
-    X = off_market_features(homes)
-    X["list_price"] = homes["list_price"]
-    return X
