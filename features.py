@@ -76,7 +76,7 @@ def square_feet(house_area):
     high = pd.to_numeric(parts[1], errors="coerce").fillna(low)
     return (low + high) / 2
 
-def sci_kit_learn_df(homes, state=None):
+def sci_kit_learn_df(homes, state=None, use_remarks=True):
     """Features for homes with no list price."""
 
     fit = state is None
@@ -108,23 +108,24 @@ def sci_kit_learn_df(homes, state=None):
     X = X.fillna(state["medians"]).fillna(0)
 
     # TF-IDF features
-    remarks = homes["remarks"].fillna("").astype(str)
+    if use_remarks:
+        remarks = homes["remarks"].fillna("").astype(str)
 
-    if fit:
-        text = state["vectorizer"].fit_transform(remarks)
-    else:
-        text = state["vectorizer"].transform(remarks)
+        if fit:
+            text = state["vectorizer"].fit_transform(remarks)
+        else:
+            text = state["vectorizer"].transform(remarks)
 
-    text = pd.DataFrame(
-        text.toarray(),
-        columns=[
-            "tfidf_" + word
-            for word in state["vectorizer"].get_feature_names_out()
-        ],
-        index=homes.index
-    )
+        text = pd.DataFrame(
+            text.toarray(),
+            columns=[
+                "tfidf_" + word
+                for word in state["vectorizer"].get_feature_names_out()
+            ],
+            index=homes.index
+        )
 
-    X = pd.concat([X, text], axis=1)
+        X = pd.concat([X, text], axis=1)
 
     # Nominal features
     X = pd.concat([

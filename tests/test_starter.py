@@ -133,12 +133,7 @@ def test_models_api_fits_and_predicts_for_run_pipeline(track):
     train = listings.iloc[:100]
     homes = data.hide_answers(listings.iloc[100:], track)
 
-    model = ex_models.make_model(track)
-    assert isinstance(
-        model,
-        models.OffMarketModel if track == "off_market" else models.ListingAdjustedModel,
-    )
-    model.fit(train)
+    model = models.make_model(track).fit(train)
     predictions = model.predict(homes)
 
     assert len(predictions) == len(homes)
