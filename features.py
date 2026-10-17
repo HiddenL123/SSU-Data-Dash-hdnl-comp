@@ -76,8 +76,6 @@ def square_feet(house_area):
     high = pd.to_numeric(parts[1], errors="coerce").fillna(low)
     return (low + high) / 2
 
-
-
 def sci_kit_learn_df(homes, state=None):
     """Features for homes with no list price."""
 
@@ -159,14 +157,17 @@ def sci_kit_learn_df(homes, state=None):
         index=X.index
     )
 
-    return X, state
+    p = homes[["longitude", "latitude"]].copy()
+    t = (homes["date_listed"] - pd.Timestamp("2021-01-01")).dt.days / 30.44
+
+    return X, p, t, state
 
 
 def list_aware_skl(homes):
     """Features for homes that have a list price: everything above, plus the list price."""
-    X, scaler = sci_kit_learn_df(homes)
+    X, p, t, scaler = sci_kit_learn_df(homes)
     X["list_price"] = homes["list_price"]
-    return X, scaler
+    return X, p, t, scaler
 
 def load_sample(df, n, random_state=None):
     """Load a dataset and return n random rows, optionally with a reproducible seed."""

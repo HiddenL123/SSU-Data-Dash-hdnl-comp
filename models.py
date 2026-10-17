@@ -7,18 +7,19 @@
 make_model() picks the model for each track. The two starting models are baselines:
 deliberately simple, so you can measure how much your own ideas add.
 """
-from catboost import train
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import ElasticNet
+from sklearn.preprocessing import StandardScaler
 
+import features
 
 
 def make_model(track):
-    """Return a fresh, untrained model."""
+    """Return a fresh model for one of the competition tracks."""
 
     if track == "off_market":
+        print("using actual model")
         return OffMarketModel()
 
     if track == "list_aware":
@@ -72,98 +73,85 @@ class PropertyModel:
             ).index
         )
 
-class OffMarketModel:
+class _FeatureModel:
+    """Fit a regularized log-price model using the shared feature pipeline."""
 
-    def __init__(self):
-        self.property_model = PropertyModel()
-        self.spatial_model = SpatialModel()
-        self.temporal_model = TemporalModel()
-        self.interaction_model = InteractionModel()
-
-    def fit(self, X, p, t, y):
-        # Joint or carefully staged training
-        ...
-        return self
-
-    def predict_log(self, X, p, t):
-        return (
-            self.property_model.predict_log(X)
-            + self.spatial_model.predict(p)
-            + self.temporal_model.predict(t)
-            + self.interaction_model.predict(X, p, t)
-        )
-
-    def predict(self, X, p, t):
-        return np.exp(self.predict_log(X, p, t))
-
-
-class OffMarketModel:
-    """Stage 1: predict log sold price from property features."""
-
-    def __init__(self, alpha=0.01, l1_ratio=0.8):
-        self.model = ElasticNet(
-            alpha=alpha,
-            l1_ratio=l1_ratio,
-            max_iter=20000,
-            random_state=0
-        )
+    def __init__(self, include_list_price=False, alpha=0.01, l1_ratio=0.8):
+        self.include_list_price = include_list_price
+        self.model = PropertyModel(alpha=alpha, l1_ratio=l1_ratio)
         self.feature_state = None
-        self.feature_names = None
+        self.input_scaler = StandardScaler()
+        self.input_columns = None
+        self.input_medians = None
+
+    def _features(self, homes, state=None):
+        X, coordinates, months, state = features.sci_kit_learn_df(
+            homes,
+            state=state,
+        )
+        X = X.copy()
+        X["longitude"] = coordinates["longitude"]
+        X["latitude"] = coordinates["latitude"]
+        X["months_since_2021"] = np.asarray(months)
+
+        if self.include_list_price:
+            list_prices = homes["list_price"].to_numpy(dtype=float)
+            if np.any(list_prices <= 0):
+                raise ValueError("List prices must be positive")
+            X["log_list_price"] = np.log(list_prices)
+
+        return X, state
 
     def fit(self, train):
-        X, self.feature_state = features.sci_kit_learn_df(train)
+        """Fit on sales, including their sold_price target."""
+        if train.empty:
+            raise ValueError("Cannot fit a model with no training rows")
+        if (train["sold_price"] <= 0).any():
+            raise ValueError("Sold prices must be positive")
 
-        y = np.log(train["sold_price"].to_numpy())
-
-        self.model.fit(X, y)
-        self.feature_names = X.columns
-
+        X, self.feature_state = self._features(train)
+        self.input_columns = X.columns.tolist()
+        self.input_medians = X.median().fillna(0)
+        X = X.reindex(columns=self.input_columns).fillna(self.input_medians)
+        values = self.input_scaler.fit_transform(X)
+        X = pd.DataFrame(values, columns=self.input_columns, index=X.index)
+        self.model.fit(X, train["sold_price"])
         return self
 
     def predict(self, homes):
-        X, _ = features.sci_kit_learn_df(
-            homes,
-            state=self.feature_state
-        )
+        """Predict one positive sold price for each input home."""
+        if self.feature_state is None:
+            raise RuntimeError("Call fit(train) before predict(homes)")
+        if homes.empty:
+            return np.array([], dtype=float)
 
-        log_predictions = self.model.predict(X)
-
-        return np.exp(log_predictions)
+        X, _ = self._features(homes, state=self.feature_state)
+        X = X.reindex(columns=self.input_columns, fill_value=0)
+        X = X.fillna(self.input_medians)
+        values = self.input_scaler.transform(X)
+        X = pd.DataFrame(values, columns=self.input_columns, index=X.index)
+        return self.model.predict(X)
 
     def selected_features(self):
-        """Return nonzero coefficients, sorted by magnitude."""
-        coefs = pd.Series(
-            self.model.coef_,
-            index=self.feature_names
+        return self.model.selected_features()
+
+
+class OffMarketModel(_FeatureModel):
+    """Off-market model using property, location, and time features."""
+
+    def __init__(self, alpha=0.01, l1_ratio=0.8):
+        super().__init__(alpha=alpha, l1_ratio=l1_ratio)
+
+
+class ListingAdjustedModel(_FeatureModel):
+    """List-aware model that additionally uses the home's list price."""
+
+    def __init__(self, alpha=0.01, l1_ratio=0.8):
+        super().__init__(
+            include_list_price=True,
+            alpha=alpha,
+            l1_ratio=l1_ratio,
         )
-
-        selected = coefs[coefs.abs() > 1e-8]
-
-        return selected.reindex(
-            selected.abs().sort_values(
-                ascending=False
-            ).index
-        )
-
-
-class ListingAdjustedModel:
-    """A machine-learning model (gradient-boosted trees) on the features in features.py.
-
-    It learns log(price) rather than price, so a 10% miss on a cheap condo counts
-    as much as a 10% miss on an expensive house. Not used until you switch it on
-    in make_model().
-    """
-
-    def __init__(self, make_features):
-        self.make_features = make_features
-        self.model = HistGradientBoostingRegressor(random_state=0)
-
-    def fit(self, train):
-        self.model.fit(self.make_features(train), np.log(train["sold_price"]))
-        return self
-
-    def predict(self, homes):
-        return np.exp(self.model.predict(self.make_features(homes)))
 
 if __name__ == "__main__":
     import features
@@ -178,8 +166,8 @@ if __name__ == "__main__":
     valid = homes.iloc[split:].copy()
 
 
-    X_train, feature_state = features.sci_kit_learn_df(train)
-    X_valid, _ = features.sci_kit_learn_df(
+    X_train, p_train, t_train, feature_state = features.sci_kit_learn_df(train)
+    X_valid, p_valid, t_valid, _ = features.sci_kit_learn_df(
         valid,
         state=feature_state
     )

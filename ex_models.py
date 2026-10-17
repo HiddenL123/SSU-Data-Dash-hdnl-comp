@@ -18,8 +18,8 @@ def make_model(track):
     if track == "list_aware":
         #return ListPriceBaseline()
         return FeatureModel(ex_features.list_aware_features)   # try this instead
-    return NearestSalesBaseline(k=10)
-    # return FeatureModel(features.off_market_features)       # try this instead
+    #return NearestSalesBaseline(k=10)
+    return FeatureModel(ex_features.off_market_features)       # try this instead
 
 
 class ListPriceBaseline:

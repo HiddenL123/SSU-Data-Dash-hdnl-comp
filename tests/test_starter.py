@@ -10,6 +10,7 @@ import check_submission
 import data
 import ex_models
 import features
+import models
 import run
 
 
@@ -122,6 +123,29 @@ def test_load_sample_returns_n_repeatable_random_rows(tmp_path, monkeypatch):
     pd.testing.assert_frame_equal(first, second)
 
 
+@pytest.mark.parametrize("track", ["off_market", "list_aware"])
+def test_models_api_fits_and_predicts_for_run_pipeline(track):
+    listings = make_listings(120)
+    listings["remarks"] = [
+        f"spacious home with feature{i % 12} near park"
+        for i in range(len(listings))
+    ]
+    train = listings.iloc[:100]
+    homes = data.hide_answers(listings.iloc[100:], track)
+
+    model = ex_models.make_model(track)
+    assert isinstance(
+        model,
+        models.OffMarketModel if track == "off_market" else models.ListingAdjustedModel,
+    )
+    model.fit(train)
+    predictions = model.predict(homes)
+
+    assert len(predictions) == len(homes)
+    assert np.isfinite(predictions).all()
+    assert (predictions > 0).all()
+
+
 # ---- the nearest-sales baseline never looks into the future ----
 
 def test_nearest_sales_ignores_later_sales():
@@ -208,7 +232,12 @@ def test_metrics_on_known_errors():
 def test_whole_pipeline_on_tiny_data(tmp_path, monkeypatch):
     folder = tmp_path / "data"
     folder.mkdir()
-    make_listings(1500).to_parquet(folder / "listings.parquet")
+    listings = make_listings(1500)
+    listings["remarks"] = [
+        f"home with feature{i % 12} near green space"
+        for i in range(len(listings))
+    ]
+    listings.to_parquet(folder / "listings.parquet")
     later = make_listings(40, seed=2, first_id=5000)
     data.hide_answers(later.iloc[:20], "off_market").to_parquet(folder / "test_off_market.parquet")
     data.hide_answers(later.iloc[20:], "list_aware").to_parquet(folder / "test_list_aware.parquet")

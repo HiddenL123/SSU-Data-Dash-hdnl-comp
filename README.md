@@ -3,6 +3,7 @@
 Start with the case handout, [`handout.md`](handout.md), and the judging rubric, [`rubric.md`](rubric.md).
 
 Two tracks:
+
 - **Off-market:** value a home with no list price.
 - **List-aware:** predict a listed home's sale price, knowing its list price.
 
@@ -59,6 +60,7 @@ validation error with your hidden-test error.
 ## Submission
 
 One PDF report (template: `report/report.tex`, 4 pages max) that links to:
+
 1. your video on YouTube, 5 minutes max (unlisted is fine, not private);
 2. your GitHub repository (public, or shared with the organisers), holding your code and two files:
 
