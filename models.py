@@ -17,6 +17,10 @@ from pygam import LinearGAM, te
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.preprocessing import SplineTransformer, StandardScaler
 from sklearn.ensemble import HistGradientBoostingRegressor
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.linear_model import ElasticNetCV
+from sklearn.pipeline import make_pipeline
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 
 import features
 
@@ -163,16 +167,228 @@ class TemporalModel:
     def predict(self, months):
         return self.model.predict(self._features(months))
 
+class ArimaModel:
+    """Monthly ARIMA model for log-price residuals."""
 
-class InteractionModel:
-    """Placeholder; interactions will be implemented separately later."""
+    def __init__(self, order=(1, 1, 0)):
+        self.order = order
+        self.model = None
+        self.start_month = None
+        self.n_months = None
+        self.historical_predictions = None
 
-    def fit(self, X, coordinates, months, log_residuals):
+    @staticmethod
+    def _months(dates):
+        """Convert dates to exact calendar months."""
+        dates = pd.to_datetime(
+            pd.Series(dates).reset_index(drop=True),
+            errors="coerce"
+        )
+
+
+        return pd.PeriodIndex(dates, freq="M")
+
+    def fit(self, dates, log_residuals):
+        """Fit ARIMA to monthly median log-price residuals."""
+
+        months = self._months(dates)
+        residuals = np.asarray(log_residuals, dtype=float).reshape(-1)
+
+        # Aggregate house-level residuals by month
+        monthly = (
+            pd.Series(residuals)
+            .groupby(months)
+            .median()
+            .sort_index()
+        )
+
+        # ARIMA requires regularly spaced observations
+        full_months = pd.period_range(
+            monthly.index.min(),
+            monthly.index.max(),
+            freq="M"
+        )
+
+        monthly = monthly.reindex(full_months)
+
+        if monthly.isna().any():
+            raise ValueError(
+                "Missing months in training data. "
+                "Handle these before fitting ARIMA."
+            )
+
+        self.start_month = full_months[0]
+        self.n_months = len(monthly)
+
+        # Fit ARIMA to the monthly residual series
+        self.model = ARIMA(
+            monthly.to_numpy(),
+            order=self.order
+        ).fit()
+
+        # One-step-ahead fitted predictions for historical months
+        self.historical_predictions = np.asarray(
+            self.model.predict(
+                start=0,
+                end=self.n_months - 1
+            ),
+            dtype=float
+        )
+
         return self
 
-    def predict(self, X, coordinates, months):
-        return np.zeros(len(X), dtype=float)
+    def predict(self, dates):
+        """Return monthly adjustments for historical or future dates."""
 
+        if self.model is None:
+            raise RuntimeError("Call fit() before predict()")
+
+        months = self._months(dates)
+
+        if len(months) == 0:
+            return np.array([], dtype=float)
+
+        # Month positions relative to start of training
+        offsets = np.asarray(
+            months.asi8 - self.start_month.ordinal,
+            dtype=int
+        )
+
+        if (offsets < 0).any():
+            raise ValueError(
+                "Prediction date precedes the training series"
+            )
+
+        predictions = np.empty(len(offsets), dtype=float)
+
+        # Months within training range
+        historical = offsets < self.n_months
+
+        predictions[historical] = (
+            self.historical_predictions[offsets[historical]]
+        )
+
+        # Months beyond training range
+        if (~historical).any():
+            steps = int(
+                offsets[~historical].max() - self.n_months + 1
+            )
+
+            forecast = np.asarray(
+                self.model.forecast(steps=steps),
+                dtype=float
+            )
+
+            predictions[~historical] = (
+                forecast[offsets[~historical] - self.n_months]
+            )
+
+        return predictions
+    
+class InteractionModel:
+    """Fixed property attribute × time interactions, fitted with Ridge."""
+
+    ATTRIBUTES = (
+        "bedrooms",
+        "washrooms",
+        "parking_total",
+        "garage",
+    )
+
+    def __init__(self, alphas=(1, 10, 100, 1000), n_splits=3):
+        self.alphas = alphas
+        self.n_splits = n_splits
+        self.model = None
+
+    def _features(self, homes):
+        # Match the time definition used in the discovery notebook
+        months = (
+            pd.to_datetime(homes["date_listed"])
+            .dt.to_period("M")
+            .astype("int64")
+            .to_numpy()
+        )
+
+        t = (
+            months - pd.Period("2025-01", freq="M").ordinal
+        ) / 12
+
+        attributes = (
+            homes[list(self.ATTRIBUTES)]
+            .apply(pd.to_numeric, errors="coerce")
+            .fillna(0)
+            .to_numpy(dtype=float)
+        )
+
+        return attributes * t[:, None], months
+
+    def fit(self, homes, log_residuals):
+        Z, months = self._features(homes)
+
+        # Chronological CV, grouping observations by listing month
+        unique_months = np.unique(months)
+
+        cv = [
+            (
+                np.flatnonzero(np.isin(months, unique_months[tr])),
+                np.flatnonzero(np.isin(months, unique_months[va]))
+            )
+            for tr, va in TimeSeriesSplit(
+                n_splits=self.n_splits
+            ).split(unique_months)
+        ]
+
+        self.model = GridSearchCV(
+            make_pipeline(
+                StandardScaler(),
+                Ridge()
+            ),
+            param_grid={"ridge__alpha": self.alphas},
+            cv=cv,
+            scoring="neg_mean_squared_error",
+            n_jobs=1
+        )
+
+        self.model.fit(
+            Z,
+            np.asarray(log_residuals, dtype=float)
+        )
+
+        return self
+
+    def predict(self, homes):
+        if len(homes) == 0:
+            return np.array([], dtype=float)
+
+        Z, _ = self._features(homes)
+        return self.model.predict(Z)
+
+    def selected_interactions(self):
+        coefficients = (
+            self.model.best_estimator_
+            .named_steps["ridge"]
+            .coef_
+        )
+
+        return pd.Series(
+            coefficients,
+            index=[f"{name} × time" for name in self.ATTRIBUTES]
+        )
+
+    def selected_alpha(self):
+        return self.model.best_params_["ridge__alpha"]
+
+
+def NoInteractionModel():
+    """Return a dummy interaction model that does nothing."""
+    class Dummy:
+        def fit(self, X, coordinates, months, log_residuals):
+            return self
+        def predict(self, X, coordinates, months):
+            return np.zeros(len(X), dtype=float)
+        def selected_interactions(self):
+            return pd.Series(dtype=float)
+    return Dummy()
 
 class _FeatureModel:
     """Shared preprocessing for both competition tracks.
@@ -281,15 +497,16 @@ class _FeatureModel:
     def selected_features(self):
         return self.model.selected_features()
 
-
-class OffMarketModel(_FeatureModel):
-    """Full off-market model: Elastic Net + spatial GAM + temporal spline."""
+"""class OffMarketModel(_FeatureModel):
+    #Full off-market model: Elastic Net + spatial GAM + temporal spline.
 
     def __init__(self, alpha=0.01, l1_ratio=0.8):
         super().__init__(alpha=alpha, l1_ratio=l1_ratio)
         self.spatial_model = SpatialModel()
-        self.temporal_model = TemporalModel()
+        #self.temporal_model = TemporalModel()
+        self.temporal_model = ArimaModel(order=(1, 1, 0))
         self.interaction_model = InteractionModel()
+        #self.interaction_model = NoInteractionModel()
 
     def fit(self, train):
         y = self._check_targets(train)
@@ -303,12 +520,18 @@ class OffMarketModel(_FeatureModel):
         self.spatial_model.fit(coordinates, residual)
         residual -= self.spatial_model.predict(coordinates)
 
-        self.temporal_model.fit(months, residual)
-        residual -= self.temporal_model.predict(months)
+        #for temporal model
+        #self.temporal_model.fit(months, residual)
+        #residual -= self.temporal_model.predict(months)
 
-        self.interaction_model.fit(X, coordinates, months, residual)
+        #for arima model
+        self.temporal_model.fit(train["date_listed"], residual)
+        residual -= self.temporal_model.predict(train["date_listed"])
+
+        self.interaction_model.fit(train, residual)
         self._fitted = True
         return self
+
 
     def predict_log(self, homes):
         if not self._fitted:
@@ -320,8 +543,56 @@ class OffMarketModel(_FeatureModel):
         return (
             self.model.predict_log(X)
             + self.spatial_model.predict(coordinates)
-            + self.temporal_model.predict(months)
-            + self.interaction_model.predict(X, coordinates, months)
+            # + self.temporal_model.predict(months) # for temporal time model
+            + self.temporal_model.predict(homes["date_listed"]) #for arima time model
+            + self.interaction_model.predict(homes)
+            
+        )"""
+
+
+
+class OffMarketModel(_FeatureModel):
+    """HGB with geographic features + ARIMA temporal correction."""
+
+    def __init__(self, alpha=0.01, l1_ratio=0.8):
+        super().__init__(alpha=alpha, l1_ratio=l1_ratio)
+        self.temporal_model = ArimaModel(order=(1, 1, 0))
+
+    def fit(self, train):
+        y = self._check_targets(train)
+        X, coordinates, months = self._prepare(train, fit=True)
+
+        # Include geography directly in HGB
+        X = X.copy()
+        X["longitude"] = coordinates[:, 0]
+        X["latitude"] = coordinates[:, 1]
+
+        # Fit HGB
+        self.model.fit(X, y)
+        residual = np.log(y) - self.model.predict_log(X)
+
+        # Fit ARIMA on remaining residuals
+        self.temporal_model.fit(train["date_listed"], residual)
+
+        self._fitted = True
+        return self
+
+    def predict_log(self, homes):
+        if not self._fitted:
+            raise RuntimeError("Call fit(train) before predict(homes)")
+        if homes.empty:
+            return np.array([], dtype=float)
+
+        X, coordinates, months = self._prepare(homes, fit=False)
+
+        # Same geographic features as training
+        X = X.copy()
+        X["longitude"] = coordinates[:, 0]
+        X["latitude"] = coordinates[:, 1]
+
+        return (
+            self.model.predict_log(X)
+            + self.temporal_model.predict(homes["date_listed"])
         )
 
 
