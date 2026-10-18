@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 import data
-import models
+import models.gb_models as models
 from check_submission import check_all
 
 ROOT = Path(__file__).parent

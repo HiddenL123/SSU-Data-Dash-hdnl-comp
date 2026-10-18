@@ -10,7 +10,7 @@ deliberately simple, so you can measure how much your own ideas add.
 import numpy as np
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-import ex_features
+import models.ex_features as ex_features
 
 
 def make_model(track):

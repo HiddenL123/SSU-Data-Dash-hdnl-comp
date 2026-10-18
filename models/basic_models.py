@@ -22,7 +22,8 @@ from sklearn.linear_model import ElasticNetCV
 from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 
-import features
+import models.basic_features as basic_features
+from models.dummy_model import DummyModel
 
 
 def make_model(track):
@@ -381,14 +382,7 @@ class InteractionModel:
 
 def NoInteractionModel():
     """Return a dummy interaction model that does nothing."""
-    class Dummy:
-        def fit(self, X, coordinates, months, log_residuals):
-            return self
-        def predict(self, X, coordinates, months):
-            return np.zeros(len(X), dtype=float)
-        def selected_interactions(self):
-            return pd.Series(dtype=float)
-    return Dummy()
+    return DummyModel()
 
 class _FeatureModel:
     """Shared preprocessing for both competition tracks.
@@ -408,9 +402,9 @@ class _FeatureModel:
 
     def _prepare(self, homes, *, fit):
         if fit:
-            output = features.sci_kit_learn_df(homes)
+            output = basic_features.sci_kit_learn_df(homes)
         else:
-            output = features.sci_kit_learn_df(homes, state=self.feature_state)
+            output = basic_features.sci_kit_learn_df(homes, state=self.feature_state)
 
         if len(output) == 4:
             X, coordinates, months, state = output
@@ -639,7 +633,7 @@ class ListingAdjustedModel:
             raise ValueError("Expected one off-market log prediction per home")
 
         d = self._list_log(homes) - base_log
-        area = features.square_feet(homes["house_area"])
+        area = basic_features.square_feet(homes["house_area"])
         area = pd.to_numeric(area, errors="coerce").clip(lower=0)
         months = (
             (pd.to_datetime(homes["date_listed"]) - pd.Timestamp("2021-01-01"))

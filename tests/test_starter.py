@@ -8,9 +8,9 @@ import pytest
 
 import check_submission
 import data
-import ex_models
-import features
-import models
+import models.ex_models as ex_models
+import models.basic_features as basic_features
+import models.basic_models as basic_models
 import run
 
 
@@ -31,7 +31,7 @@ def test_bag_of_words_handles_repeated_words_and_duplicate_index_labels():
         index=[7, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     )
 
-    result = features.do_bag_of_words(remarks)
+    result = basic_features.do_bag_of_words(remarks)
 
     assert result.index.tolist() == [7, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     assert result.loc[7, "bow_home"].tolist() == [1, 1]
@@ -48,8 +48,8 @@ def test_text_features_fit_vectorizers_before_transforming():
         ]
     })
 
-    bow = features.do_bag_of_words(remarks)
-    tfidf = features.tf_idf(remarks)
+    bow = basic_features.do_bag_of_words(remarks)
+    tfidf = basic_features.tf_idf(remarks)
 
     assert len(bow) == len(remarks)
     assert len(tfidf) == len(remarks)
@@ -133,7 +133,7 @@ def test_models_api_fits_and_predicts_for_run_pipeline(track):
     train = listings.iloc[:100]
     homes = data.hide_answers(listings.iloc[100:], track)
 
-    model = models.make_model(track).fit(train)
+    model = basic_models.make_model(track).fit(train)
     predictions = model.predict(homes)
 
     assert len(predictions) == len(homes)
