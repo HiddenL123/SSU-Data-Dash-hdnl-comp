@@ -71,7 +71,6 @@ class NearestSalesBaseline:
         nearest = np.argsort(distance, kind="stable")[: self.k]
         return float(np.median(earlier["sold_price"].to_numpy()[nearest]))
 
-
 class FeatureModel:
     """A machine-learning model (gradient-boosted trees) on the features in features.py.
 

@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 
-
 class DummyModel:
     def fit(self, *features):
         return self

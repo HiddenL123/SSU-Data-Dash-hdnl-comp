@@ -1,7 +1,4 @@
-
 # Housing Price Model — Development Roadmap
-
-
 
 Note: This is an AI generated TODO. We will replace this
 
@@ -183,11 +180,12 @@ Do not use a fixed prediction-correlation threshold such as 0.99 as the sole adm
 ## Immediate Next Steps
 
 1. **Benchmark CatBoost and LightGBM against HGB** with identical features and validation periods.
-2. Test whether retaining a residual spatial GAM benefits the geographical HGB architecture.
-3. Examine paired prediction errors to determine whether the competing models complement each other.
-4. Tune the strongest model using chronological validation.
-5. Consider a lightweight ensemble of the best-performing models.
-6. Revisit out-of-time-trained interactions only if there is time and evidence of further improvement.
+2. Test whether retaining a residual spatial G
+3. AM benefits the geographical HGB architecture.
+4. Examine paired prediction errors to determine whether the competing models complement each other.
+5. Tune the strongest model using chronological validation.
+6. Consider a lightweight ensemble of the best-performing models.
+7. Revisit out-of-time-trained interactions only if there is time and evidence of further improvement.
 
 ## Modelling Principle
 
