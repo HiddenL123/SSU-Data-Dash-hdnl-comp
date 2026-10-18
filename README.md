@@ -3,7 +3,6 @@
 Start with the case handout, [`handout.md`](handout.md), and the judging rubric, [`rubric.md`](rubric.md).
 
 Two tracks:
-
 - **Off-market:** value a home with no list price.
 - **List-aware:** predict a listed home's sale price, knowing its list price.
 
@@ -20,19 +19,9 @@ Python 3.10 or newer (3.11+ on macOS 27):
 pip install -r requirements.txt
 ```
 
-Data files in the project `data/` folder are used automatically, so you can keep
-local copies there and avoid repeated Hugging Face requests. If those files are
-missing, the data downloads itself on first use. No Python? Use the
+The data downloads itself on first use. No Python? Use the
 [Colab notebook](https://colab.research.google.com/github/erwinzhang7/SSU-Data-Dash/blob/main/notebooks/quickstart.ipynb).
 Prefer R? See `r/baseline.R`.
-
-For a smaller, repeatable dataset while testing features or models:
-
-```python
-import data
-
-homes = data.load_sample("listings", n=1000, random_state=42)
-```
 
 ## Commands
 
@@ -60,7 +49,6 @@ validation error with your hidden-test error.
 ## Submission
 
 One PDF report (template: `report/report.tex`, 4 pages max) that links to:
-
 1. your video on YouTube, 5 minutes max (unlisted is fine, not private);
 2. your GitHub repository (public, or shared with the organisers), holding your code and two files:
 

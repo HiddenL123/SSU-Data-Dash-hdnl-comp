@@ -1,207 +1,96 @@
+"""Ordered additive models on the log-price scale.
+
+Each spec is (component class, feature name, constructor kwargs or None).
+Components implement fit(X, residual) and predict(X), both on the log scale.
+"""
+
+from copy import deepcopy
+
 import numpy as np
-import pandas as pd
 
-from models.gb_models import CatBoostRegressor, ArimaResidualModel
+from .arima import ArimaResidualModel
+from .catboost import CatBoostRegressor
+from .components import adapt_component
+from .features import make_features
+from .listing import ListingAdjustment
+from .defaults import DEFAULT_PARAMS
 
-DEFAULT_SPECS = [
-    (
-        CatBoostRegressor,
-        "Xpt",
-        {
-            "iterations": 1200,
-            "depth": 6,
-            "learning_rate": 0.04,
-            "verbose": False,
-            "cat_features": CATEGORICAL_COLUMNS,
-        }
-    ),
-    (
-        ArimaResidualModel,
-        "date_listed",
-        {"order": (1, 1, 0)}
-    ),
+
+DEFAULT_MODELSPECS = [
+    (CatBoostRegressor, "Xpt_time", deepcopy(DEFAULT_PARAMS["catboost"])),
+    (ArimaResidualModel, "date_listed", {"order": (1, 1, 0)}),
 ]
-
+# Alias for the original draft's name.
+DEFAULT_SPECS = DEFAULT_MODELSPECS
 
 
 class OffMarketModel:
-    """Sequential additive model for log sale prices."""
+    """Fit fresh components sequentially to remaining log-price residuals."""
 
     def __init__(self, modelspecs):
+        self.modelspecs = deepcopy(list(modelspecs))
+        if not self.modelspecs:
+            raise ValueError("modelspecs must contain at least one component")
         self.components = []
+        for model_class, feature_name, params in self.modelspecs:
+            component = adapt_component(model_class(**(params or {})))
+            features = make_features(
+                feature_name, model=getattr(component, "feature_backend", "catboost")
+            )
+            self.components.append((component, features))
+        self._fitted = False
 
-        for model_class, feature_name, params in modelspecs:
-            model = model_class(**(params or {}))
-            features = make_features(feature_name)
-
-            self.components.append((model, features))
+    @staticmethod
+    def _prediction(component, X, n):
+        values = np.asarray(component.predict(X), dtype=float).reshape(-1)
+        if values.shape != (n,) or not np.isfinite(values).all():
+            raise ValueError("Each component must predict one finite log value per home")
+        return values
 
     def fit(self, train):
-        y = np.log(train["sold_price"].to_numpy(dtype=float))
-        residual = y.copy()
-
-        for model, features in self.components:
+        self._fitted = False
+        prices = train["sold_price"].to_numpy(dtype=float)
+        if not len(prices) or not np.isfinite(prices).all() or (prices <= 0).any():
+            raise ValueError("Training needs positive finite sold_price values")
+        residual = np.log(prices)
+        for component, features in self.components:
             X = features.fit_transform(train)
-
-            model.fit(X, residual)
-            residual -= np.asarray(model.predict(X), dtype=float)
-
+            component.fit(X, residual)
+            residual = residual - self._prediction(component, X, len(train))
+        self._fitted = True
         return self
 
     def predict_log(self, homes):
+        if not self._fitted:
+            raise RuntimeError("Call fit() before predict()")
         prediction = np.zeros(len(homes), dtype=float)
-
-        for model, features in self.components:
+        if homes.empty:
+            return prediction
+        for component, features in self.components:
             X = features.transform(homes)
-            prediction += np.asarray(model.predict(X), dtype=float)
-
+            prediction += self._prediction(component, X, len(homes))
         return prediction
 
     def predict(self, homes):
         return np.exp(self.predict_log(homes))
 
 
-class ListAwareModel:
-    """Listing-price adjustment on top of any OffMarketModel specification."""
+class ListAwareModel(ListingAdjustment):
+    """Existing chronological Ridge adjustment with configurable base models."""
 
     def __init__(self, modelspecs, correction_alpha=50.0, n_folds=3):
-        self.modelspecs = modelspecs
-        self.base_model = OffMarketModel(modelspecs)
+        self.modelspecs = deepcopy(list(modelspecs))
+        super().__init__(correction_alpha=correction_alpha, n_folds=n_folds)
 
-        self.correction_model = Ridge(alpha=correction_alpha)
-        self.scaler = StandardScaler()
-        self.n_folds = n_folds
+    def _new_base_model(self):
+        return OffMarketModel(self.modelspecs)
 
-        self.columns_ = None
-        self.medians_ = None
-
-    def _features(self, homes, base_log):
-        """Construct listing-price correction features."""
-
-        base_log = np.asarray(base_log, dtype=float)
-        list_log = np.log(
-            homes["list_price"].to_numpy(dtype=float)
-        )
-
-        dates = pd.to_datetime(homes["date_listed"])
-
-        X = pd.DataFrame(index=homes.index)
-
-        # Listing price discrepancy
-        X["list_discrepancy"] = list_log - base_log
-        X["base_log_price"] = base_log
-
-        # Property characteristics
-        for col in ["bedrooms", "washrooms", "parking_total"]:
-            X[col] = pd.to_numeric(
-                homes[col], errors="coerce"
-            )
-
-        # Geography and time
-        X["longitude"] = homes["longitude"]
-        X["latitude"] = homes["latitude"]
-        X["months_since_2021"] = (
-            (dates.dt.year - 2021) * 12 + dates.dt.month - 1
-        )
-
-        # House type
-        types = pd.get_dummies(
-            homes["house_type_name"].fillna("Unknown"),
-            prefix="type",
-            dtype=float
-        )
-
-        return pd.concat([X, types], axis=1)
-
-    def _prepare(self, homes, base_log, fit=False):
-        X = self._features(homes, base_log)
-
-        if fit:
-            self.columns_ = X.columns.tolist()
-            self.medians_ = X.median().fillna(0)
-
-        X = X.reindex(columns=self.columns_, fill_value=0)
-        X = X.fillna(self.medians_).fillna(0)
-
-        if fit:
-            return self.scaler.fit_transform(X)
-
-        return self.scaler.transform(X)
-
-    def fit(self, train):
-        train = train.sort_values("date_sold").reset_index(drop=True)
-        sale_months = train["date_sold"].dt.to_period("M")
-        unique_months = sale_months.unique()
-
-        X_oof = []
-        y_oof = []
-
-        # Generate out-of-time predictions for the correction model
-        for _, val_idx in TimeSeriesSplit(
-            n_splits=self.n_folds
-        ).split(unique_months):
-
-            val_months = unique_months[val_idx]
-            cutoff = val_months[0].start_time
-
-            past = train[train["date_sold"] < cutoff]
-            held_out = train[sale_months.isin(val_months)]
-
-            # Fresh off-market model with the SAME specifications
-            model = OffMarketModel(self.modelspecs)
-            model.fit(past)
-
-            base_log = model.predict_log(held_out)
-
-            X_oof.append(
-                self._features(held_out, base_log)
-            )
-            y_oof.append(
-                np.log(held_out["sold_price"].to_numpy())
-                - base_log
-            )
-
-        # Fit Ridge on historical out-of-time errors
-        X_oof = pd.concat(X_oof, ignore_index=True)
-        y_oof = np.concatenate(y_oof)
-
-        # _prepare constructs the same columns used for OOF
-        self.columns_ = X_oof.columns.tolist()
-        self.medians_ = X_oof.median().fillna(0)
-
-        X = self.scaler.fit_transform(
-            X_oof.fillna(self.medians_).fillna(0)
-        )
-
-        self.correction_model.fit(X, y_oof)
-
-        # Final off-market model uses all available training data
-        self.base_model.fit(train)
-
-        return self
-
-    def predict_log(self, homes):
-        if homes.empty:
-            return np.array([], dtype=float)
-
-        base_log = self.base_model.predict_log(homes)
-
-        X = self._prepare(homes, base_log)
-        correction = self.correction_model.predict(X)
-
-        return base_log + correction
-
-    def predict(self, homes):
-        return np.exp(self.predict_log(homes))
 
 def make_model(track, modelspecs=None):
-    if modelspecs is None:
-        modelspecs = DEFAULT_SPECS
-
+    """Construct an unfitted competition model; defaults match legacy boosting."""
+    specs = DEFAULT_MODELSPECS if modelspecs is None else modelspecs
     if track == "off_market":
-        return OffMarketModel(modelspecs)
-
+        return OffMarketModel(specs)
     if track == "list_aware":
-        return ListAwareModel(modelspecs)
-
+        return ListAwareModel(specs)
     raise ValueError(f"Unknown competition track: {track}")

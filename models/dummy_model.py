@@ -1,19 +1,7 @@
-import numpy as np
-import pandas as pd
+"""Compatibility import; implementation is in models.legacy.dummy_model."""
+from models.legacy.dummy_model import *  # noqa: F401,F403
+from models.legacy import dummy_model as _legacy
 
-class DummyModel:
-    def fit(self, *features):
-        return self
 
-    def predict(self, *features):
-        if not features:
-            return np.zeros(0, dtype=float)
-
-        length = len(features[0])
-        if any(len(feature) != length for feature in features[1:]):
-            raise ValueError("All feature arguments must have the same length")
-
-        return np.zeros(length, dtype=float)
-
-    def selected_interactions(self):
-        return pd.Series(dtype=float)
+def __getattr__(name):
+    return getattr(_legacy, name)
