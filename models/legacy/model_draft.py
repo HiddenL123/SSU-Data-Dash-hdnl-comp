@@ -6,7 +6,7 @@ from models.gb_models import CatBoostRegressor, ArimaResidualModel
 DEFAULT_SPECS = [
     (
         CatBoostRegressor,
-        "Xpt",
+        "Xp",
         {
             "iterations": 1200,
             "depth": 6,

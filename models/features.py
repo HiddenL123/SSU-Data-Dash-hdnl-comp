@@ -1,6 +1,7 @@
 """Training-fitted feature providers, independent of residual orchestration."""
 
 from .gb_features import BoostingFeatures, square_feet
+from models.market_features import MarketAugmentedFeatures
 
 
 class PropertyFeatures:
@@ -30,14 +31,15 @@ class DateFeatures:
 
 
 FEATURE_PROVIDERS = {
-    "Xpt": lambda model: PropertyFeatures(model, include_time=False),
-    "Xpt_time": lambda model: PropertyFeatures(model, include_time=True),
+    "Xp": lambda model: PropertyFeatures(model, include_time=False),
+    "Xpt": lambda model: PropertyFeatures(model, include_time=True),
     "date_listed": lambda model: DateFeatures(),
+    "Xpt_market": lambda model: MarketAugmentedFeatures(make_features("Xpt", model=model)),
 }
 
 
 def make_features(name: str, model: str = "catboost"):
-    """Create independent state; register extra factories in FEATURE_PROVIDERS."""
+    """Create independent state: Xp = property + position; Xpt also includes time."""
     if name not in FEATURE_PROVIDERS:
         raise ValueError(f"Unknown feature specification: {name}")
     return FEATURE_PROVIDERS[name](model)

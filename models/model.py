@@ -17,7 +17,7 @@ from .defaults import DEFAULT_PARAMS
 
 
 DEFAULT_MODELSPECS = [
-    (CatBoostRegressor, "Xpt_time", deepcopy(DEFAULT_PARAMS["catboost"])),
+    (CatBoostRegressor, "Xpt", deepcopy(DEFAULT_PARAMS["catboost"])),
     (ArimaResidualModel, "date_listed", {"order": (1, 1, 0)}),
 ]
 # Alias for the original draft's name.
@@ -86,11 +86,11 @@ class ListAwareModel(ListingAdjustment):
         return OffMarketModel(self.modelspecs)
 
 
-def make_model(track, modelspecs=None):
+def make_model(track, modelspecs=None, list_aware_implementation = ListAwareModel):
     """Construct an unfitted competition model; defaults match legacy boosting."""
     specs = DEFAULT_MODELSPECS if modelspecs is None else modelspecs
     if track == "off_market":
         return OffMarketModel(specs)
     if track == "list_aware":
-        return ListAwareModel(specs)
+        return list_aware_implementation(specs)
     raise ValueError(f"Unknown competition track: {track}")

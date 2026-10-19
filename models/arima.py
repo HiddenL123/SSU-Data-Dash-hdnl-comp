@@ -1,4 +1,4 @@
-"""Existing monthly residual ARIMA; fitting and forecasting are unchanged."""
+"""Monthly residual ARIMA using Burg estimation and the existing forecast mapping."""
 
 import numpy as np
 import pandas as pd
@@ -37,20 +37,18 @@ class ArimaResidualModel:
         monthly = monthly.reindex(month_index).interpolate(limit_direction="both")
         self.first_month, self.last_month = month_index[0], month_index[-1]
         self.result = ARIMA(monthly, order=self.order).fit()
-        print(
-            "ARIMA converged:",
-            self.result.mle_retvals.get("converged")
-        )
 
-        print(
-            "Iterations:",
-            self.result.mle_retvals.get("iterations")
-        )
-
-        print(
-            "Parameters:",
-            self.result.params
-        )
+        details = getattr(self.result, "mle_retvals", None)
+        if details is not None and not details.get("converged", False):
+            print({
+                "order": self.order,
+                "months": len(monthly),
+                "period": (str(self.first_month), str(self.last_month)),
+                "warnflag": details.get("warnflag"),
+                "iterations": details.get("iterations"),
+                "gradient": details.get("gopt"),
+                "parameters": self.result.params.to_dict(),
+            })
         return self
 
     def predict(self, dates):

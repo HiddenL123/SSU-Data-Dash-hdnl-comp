@@ -9,9 +9,9 @@ from models import make_model, DEFAULT_MODELSPECS
 from models.catboost import CatBoostRegressor
 from models.arima import ArimaResidualModel
 
-catboost_only = [(CatBoostRegressor, "Xpt_time", None)]
+catboost_only = [(CatBoostRegressor, "Xpt", None)]
 catboost_arima = [
-    (CatBoostRegressor, "Xpt_time", {"iterations": 900}),
+    (CatBoostRegressor, "Xpt", {"iterations": 900}),
     (ArimaResidualModel, "date_listed", {"order": (1, 1, 0)}),
 ]
 model = make_model("off_market", modelspecs=catboost_arima).fit(train)
@@ -51,9 +51,18 @@ Feature providers in `features.py` implement `fit_transform(train)` and
 
 | Name | Inputs |
 | --- | --- |
-| `Xpt` | Existing property, geography, categorical and selected TF-IDF features |
-| `Xpt_time` | Same features plus the existing trend and seasonal columns |
+| `Xp` | Existing property, geography, categorical and selected TF-IDF features |
+| `Xpt` | Same features plus the existing trend and seasonal columns |
 | `date_listed` | Listing-date Series for temporal models |
+
+Here `X` means property variables, `p` means position, and `t` means time.
+`Xp` has no engineered time columns; `Xpt` adds `months_since_2021`,
+`season_sin`, and `season_cos`. `Xpt_market` adds historical market features
+to `Xpt`. The previous names were `Xpt` for the time-independent set and
+`Xpt_time` for the time-aware set; active configurations have been migrated
+without changing their feature values. Feature identifiers in archived notebook
+examples and the legacy draft have also been migrated; historical result filenames
+are retained because their names alone cannot establish the inputs used.
 
 The original fixed text vocabulary, fitted IDF weights, column ordering and
 `Unknown` category handling are preserved. Off-market providers ignore listing

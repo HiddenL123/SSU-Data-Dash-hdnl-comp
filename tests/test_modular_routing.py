@@ -54,7 +54,7 @@ def test_old_boosting_entry_points_route_to_modular_with_equivalent_predictions(
 def test_direct_boosting_classes_and_new_specs_are_routed():
     assert issubclass(compatibility.GBOffMarketModel, OffMarketModel)
     assert issubclass(compatibility.GBListAwareModel, ListAwareModel)
-    config = [(CatBoostRegressor, "Xpt_time", {"iterations": 8})]
+    config = [(CatBoostRegressor, "Xpt", {"iterations": 8})]
     assert len(compatibility.make_model("off_market", modelspecs=config).components) == 1
     assert not issubclass(legacy.GBOffMarketModel, OffMarketModel)
     with pytest.raises(ValueError, match="Unknown algorithm"):
@@ -67,7 +67,7 @@ def test_interaction_discovery_and_text_diagnostics_use_modular_baseline():
         "data": SimpleNamespace(load=lambda _: listings, hide_answers=data.hide_answers),
         "pd": pd, "np": np, "make_model": make_model,
         "MODEL_SPECS": [
-            (CatBoostRegressor, "Xpt_time", {"iterations": 8, "thread_count": 1}),
+            (CatBoostRegressor, "Xpt", {"iterations": 8, "thread_count": 1}),
             (ArimaResidualModel, "date_listed", None),
         ],
         "DISCOVERY_MONTHS": pd.period_range("2026-04", "2026-05", freq="M"),
@@ -92,13 +92,18 @@ def test_training_notebook_publishes_output_for_analysis_notebook(tmp_path, monk
     predictions = listings[["ml_num", "sold_price", "house_type_name"]].assign(
         track="off_market", month="2026-04", predicted_price=listings.sold_price * 1.01
     )
-    def validate(*, modelspecs):
+    def validate(*, modelspecs, make_model_func=None):
         assert modelspecs[0][0] is CatBoostRegressor
         assert modelspecs[1][0] is ArimaResidualModel
         return predictions, []
 
     namespace = {"ROOT": tmp_path, "validate": validate}
     exec(notebook_source("model_run.ipynb", 2), namespace)
+    notebook = json.loads((ROOT / "model_run.ipynb").read_text(encoding="utf-8"))
+    for cell in notebook["cells"][3:]:
+        source = "".join(cell.get("source", []))
+        if "predictions.to_csv" in source:
+            exec(source, namespace)
     assert (tmp_path / "outputs/validation_predictions.csv").exists()
     monkeypatch.chdir(tmp_path)
     namespace = {
@@ -116,13 +121,14 @@ def test_notebook_specs_exactly_match_legacy_configuration(name, cell):
     import ast
     # Evaluate configuration only, without running expensive validation.
     tree = ast.parse(notebook_source(name, cell))
-    assignment = next(node for node in tree.body if isinstance(node, ast.Assign)
-                      and any(isinstance(t, ast.Name) and t.id == "MODEL_SPECS" for t in node.targets))
+    assignments = [node for node in tree.body if isinstance(node, ast.Assign)
+                   and any(isinstance(t, ast.Name) and t.id in {"CATBOOST_PARAMS", "MODEL_SPECS"}
+                           for t in node.targets)]
     namespace = {"CatBoostRegressor": CatBoostRegressor, "ArimaResidualModel": ArimaResidualModel}
-    exec(compile(ast.Module(body=[assignment], type_ignores=[]), name, "exec"), namespace)
+    exec(compile(ast.Module(body=assignments, type_ignores=[]), name, "exec"), namespace)
     config = namespace["MODEL_SPECS"]
     assert config == [
-        (CatBoostRegressor, "Xpt_time", legacy.DEFAULT_PARAMS["catboost"]),
+        (CatBoostRegressor, "Xpt", legacy.DEFAULT_PARAMS["catboost"]),
         (ArimaResidualModel, "date_listed", {"order": (1, 1, 0)}),
     ]
     new = make_model("off_market", modelspecs=config)

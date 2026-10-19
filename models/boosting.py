@@ -19,7 +19,7 @@ def boosting_specs(algorithm="catboost", model_params=None, arima_order=(1, 1, 0
     if algorithm not in BOOSTERS:
         raise ValueError(f"Unknown algorithm: {algorithm}")
     return [
-        (BOOSTERS[algorithm], "Xpt_time", model_params),
+        (BOOSTERS[algorithm], "Xpt", model_params),
         (ArimaResidualModel, "date_listed", {"order": arima_order}),
     ]
 

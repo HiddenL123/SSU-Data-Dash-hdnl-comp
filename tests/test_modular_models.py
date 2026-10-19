@@ -26,7 +26,7 @@ CAT_PARAMS = {"iterations": 8, "depth": 3, "thread_count": 1}
 
 
 def specs(arima=True):
-    result = [(CatBoostRegressor, "Xpt_time", CAT_PARAMS)]
+    result = [(CatBoostRegressor, "Xpt", CAT_PARAMS)]
     if arima:
         result.append((ArimaResidualModel, "date_listed", {"order": (1, 1, 0)}))
     return result
@@ -60,7 +60,7 @@ def test_sequential_residuals_constructor_params_and_prediction_sum():
 
 
 @pytest.mark.parametrize("backend", ["catboost", "lightgbm", "xgboost"])
-@pytest.mark.parametrize("feature_name", ["Xpt", "Xpt_time"])
+@pytest.mark.parametrize("feature_name", ["Xp", "Xpt"])
 def test_features_reuse_vocabulary_categories_and_column_order(backend, feature_name):
     train = make_listings(50)
     train["remarks"] = ["renovated family" if i % 2 else "original home" for i in range(50)]
@@ -83,7 +83,7 @@ def test_features_reuse_vocabulary_categories_and_column_order(backend, feature_
         assert transformed.community.dtype == X.community.dtype
     assert {"longitude", "latitude"} <= set(X.columns)
     assert not {"sold_price", "date_sold", "log_list_price", "list_price"} & set(X.columns)
-    assert ("months_since_2021" in X) == (feature_name == "Xpt_time")
+    assert ("months_since_2021" in X) == (feature_name == "Xpt")
     altered = train.assign(sold_price=1, list_price=1, date_sold=pd.Timestamp("2099-01-01"))
     pd.testing.assert_frame_equal(provider.transform(train), provider.transform(altered))
 
@@ -117,7 +117,7 @@ def test_catboost_with_optional_arima(arima):
     (XGBRegressor, {"n_estimators": 8, "n_jobs": 1}),
 ])
 def test_other_boosters_and_unknown_categories(component, params):
-    model = OffMarketModel([(component, "Xpt_time", params)]).fit(make_listings(100))
+    model = OffMarketModel([(component, "Xpt", params)]).fit(make_listings(100))
     homes = data.hide_answers(make_listings(10, seed=2), "off_market").assign(community="Unseen")
     assert np.isfinite(model.predict(homes)).all()
 
@@ -132,13 +132,13 @@ def test_native_classes_and_legacy_predictions(backend, component, extra):
     native_class = getattr(import_module(backend), component.estimator_name)
     params = {**DEFAULT_PARAMS[backend], **extra}
     train = make_listings(100)
-    native = OffMarketModel([(native_class, "Xpt_time", params)]).fit(train)
-    wrapped = OffMarketModel([(component, "Xpt_time", extra)]).fit(train)
+    native = OffMarketModel([(native_class, "Xpt", params)]).fit(train)
+    wrapped = OffMarketModel([(component, "Xpt", extra)]).fit(train)
     homes = data.hide_answers(make_listings(10, seed=2), "off_market").assign(community="Unseen")
     np.testing.assert_allclose(native.predict(homes), wrapped.predict(homes), rtol=1e-10)
     legacy = GBOffMarketModel(algorithm=backend, model_params=extra).fit(train)
     combined = OffMarketModel([
-        (component, "Xpt_time", extra),
+        (component, "Xpt", extra),
         (ArimaResidualModel, "date_listed", None),
     ]).fit(train)
     np.testing.assert_allclose(legacy.predict(homes), combined.predict(homes), rtol=1e-10)
@@ -162,7 +162,7 @@ def test_list_aware_folds_have_fresh_models_and_strict_chronology(monkeypatch):
     import models.model as module
     monkeypatch.setattr(module, "OffMarketModel", RecordingBase)
     train = make_listings(500)
-    config = [(FractionOfMean, "Xpt_time", None)]
+    config = [(FractionOfMean, "Xpt", None)]
     model = ListAwareModel(config).fit(train)
     assert len(instances) == 4  # Three historical fits and the final base model.
     assert len({id(m.components[0][0]) for m in instances}) == 4
@@ -176,7 +176,7 @@ def test_defaults_match_existing_configuration_and_are_independent():
     assert run.models.make_model is models.make_model
     assert len(first.components) == 2
     assert first.modelspecs[0][2] == DEFAULT_PARAMS["catboost"]
-    assert first.modelspecs[0][1] == "Xpt_time"
+    assert first.modelspecs[0][1] == "Xpt"
     assert first.components[1][0].order == (1, 1, 0)
     first.modelspecs[0][2]["depth"] = 1
     assert second.modelspecs[0][2]["depth"] == 6

@@ -149,3 +149,50 @@
   - Observation: Off-market MdAPE improved from 10.45% to 10.05%, with MAPE improving from 13.03% to 12.76%. However, list-aware MdAPE deteriorated from 4.55% to 4.71%.
   - Conclusion: Time-aware CatBoost is the new best off-market configuration. Its effect on list-aware predictions is less favorable, and the separate contributions of time features versus ARIMA removal remain to be isolated.
   - Next experiment: Time-aware CatBoost + ARIMA.
+- E20 — Time-aware CatBoost + ARIMA
+
+  - Hypothesis: ARIMA captures residual temporal patterns not explained by CatBoost's time features.
+  - Test: Add ARIMA(1,1,0) to time-aware CatBoost.
+  - Observation:
+    - Off-market: MAPE 12.67%, MdAPE 10.02%, median signed error +0.38%.
+    - List-aware: MAPE 5.82%, MdAPE 4.73%, median signed error −2.34%.
+    - ARIMA improved off-market MdAPE by only 0.03 percentage points compared with CatBoost alone.
+  - Conclusion: ARIMA provides marginal off-market improvement but no list-aware benefit.
+
+**ARIMA Optimization**
+
+- E21 — ARIMA convergence investigation
+
+  - Hypothesis: Maximum-likelihood estimation (MLE) convergence failures may negatively affect prediction accuracy.
+  - Test: Examine optimizer convergence, iterations, and estimated ARIMA parameters.
+  - Observation: Some models failed convergence after 12–16 iterations. AR coefficients remained approximately −0.5 to −0.6.
+  - Conclusion: Numerical optimization issues exist, but parameter estimates appear relatively consistent.
+- E22 — Burg vs. MLE estimation
+
+  - Hypothesis: Burg estimation can improve numerical reliability and predictive accuracy.
+  - Test: Replace MLE with Burg while retaining ARIMA(1,1,0).
+  - Observation:
+    - Off-market: MAPE 12.67%, MdAPE 10.02% for both estimators.
+    - List-aware: MAPE 5.82%, MdAPE 4.73% for both estimators.
+  - Conclusion: No measurable accuracy improvement at the reported precision. Further ARIMA optimizer experiments are low priority.
+
+**List-Aware Model Experiments**
+
+- E23 — CatBoost sale-to-list ratio prediction
+
+  - Hypothesis: Directly modelling the sale-to-list ratio with CatBoost outperforms the existing two-stage Ridge correction.
+  - Test: Train CatBoost to predict `log(sold_price / list_price)` using property, geographical, textual, temporal, and listing-price features.
+  - Observation:
+    - List-aware: MAPE 5.36%, MdAPE 4.29%, median signed error +1.06%.
+    - Previous Ridge model: MAPE 5.82%, MdAPE 4.73%.
+    - MdAPE improved by 0.44 percentage points.
+  - Conclusion: Ratio-based CatBoost substantially outperforms the previous Ridge architecture and becomes the strongest list-aware model.
+- E24 — Direct log-price vs. log-ratio prediction
+
+  - Hypothesis: Predicting the sale-to-list ratio provides a better learning target than predicting sold price directly.
+  - Test: Compare CatBoost predicting `log(sold_price)` against CatBoost predicting `log(sold_price / list_price)`, keeping the features and hyperparameters identical.
+  - Observation:
+    - Direct: MAPE 5.52%, MdAPE 4.42%, median signed error +0.98%.
+    - Ratio: MAPE 5.36%, MdAPE 4.29%, median signed error +1.06%.
+    - Ratio prediction improved MdAPE by 0.13 percentage points.
+  - Conclusion: The ratio formulation performs better, suggesting that using listing price as an explicit baseline is beneficial. Retain ratio CatBoost as the preferred list-aware architecture.
