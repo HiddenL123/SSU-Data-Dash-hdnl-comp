@@ -2,6 +2,8 @@
 
 from .gb_features import BoostingFeatures, square_feet
 from models.market_features import MarketAugmentedFeatures
+from models.spatiotemporal_features import ComparableAugmentedFeatures
+from models.ratio_comparable_features import RatioComparableFeatures
 
 
 class PropertyFeatures:
@@ -35,11 +37,74 @@ FEATURE_PROVIDERS = {
     "Xpt": lambda model: PropertyFeatures(model, include_time=True),
     "date_listed": lambda model: DateFeatures(),
     "Xpt_market": lambda model: MarketAugmentedFeatures(make_features("Xpt", model=model)),
+    "Xpt_spatiotemporal": lambda model: ComparableAugmentedFeatures(make_features("Xpt"),
+                                                                   candidates=128,
+                                                                   neighbors=32,
+                                                                   radius_km=4.0,
+                                                                   half_life_days=180,)
+
 }
 
+class _ListAwareBoundFeatures:
+    """Bind track and backend to a feature provider."""
 
-def make_features(name: str, model: str = "catboost"):
-    """Create independent state: Xp = property + position; Xpt also includes time."""
-    if name not in FEATURE_PROVIDERS:
-        raise ValueError(f"Unknown feature specification: {name}")
-    return FEATURE_PROVIDERS[name](model)
+    def __init__(self, provider, model):
+        self.provider = provider
+        self.model = model
+
+    def fit_transform(self, homes):
+        return self.provider.fit_transform(
+            homes,
+            track="list_aware",
+            model=self.model,
+        )
+
+    def transform(self, homes):
+        return self.provider.transform(
+            homes,
+            model=self.model,
+        )
+
+    @property
+    def categorical_features(self):
+        return self.provider.categorical_features
+
+
+def _list_aware_xpt(model):
+    return BoostingFeatures(
+        use_remarks=True,
+        include_time=True,
+    )
+
+
+def _list_aware_xpt_spatiotemporal(model):
+    return RatioComparableFeatures(
+        _list_aware_xpt(model),
+        candidates=128,
+        neighbors=32,
+        radius_km=4.0,
+        half_life_days=180,
+    )
+
+
+LIST_AWARE_FEATURE_SETS = {
+    "Xpt": _list_aware_xpt,
+    "Xpt_spatiotemporal": _list_aware_xpt_spatiotemporal,
+}
+
+def make_features(
+    feature_name,
+    model="catboost",
+    track="off_market",
+):
+    if (
+        track == "list_aware"
+        and feature_name in LIST_AWARE_FEATURE_SETS
+    ):
+        return _ListAwareBoundFeatures(
+            LIST_AWARE_FEATURE_SETS[feature_name](model),
+            model,
+        )
+
+    # Preserve your existing off-market lookup here.
+    return FEATURE_PROVIDERS[feature_name](model)

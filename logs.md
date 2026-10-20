@@ -196,3 +196,26 @@
     - Ratio: MAPE 5.36%, MdAPE 4.29%, median signed error +1.06%.
     - Ratio prediction improved MdAPE by 0.13 percentage points.
   - Conclusion: The ratio formulation performs better, suggesting that using listing price as an explicit baseline is beneficial. Retain ratio CatBoost as the preferred list-aware architecture.
+- E25: Market-Level Features
+
+  - Hypothesis: Historical market statistics capture pricing trends beyond CatBoost's existing temporal features.
+  - Test: Compare time-aware CatBoost with market features, both with and without ARIMA.
+  - Observation:
+
+    - CatBoost + Market: MAPE 12.82%, MdAPE 9.99%.
+    - CatBoost + Market + ARIMA: MAPE 12.73%, MdAPE 10.04%.
+    - CatBoost + ARIMA alone: MAPE 12.67%, MdAPE 10.02%.
+  - Conclusion: Market features provide a small improvement in MdAPE without ARIMA, but combining them with ARIMA does not improve performance. Their incremental value is uncertain.
+
+  **Spatiotemporal Modelling**
+
+  * E26 — CatBoost with Historical Comparable-Sales Features
+    * Hypothesis: Nearby historical sales, weighted by geographic distance, recency, and property similarity, contain predictive information beyond conventional property and temporal features.
+    * Test: Add historical comparable-sales features to time-aware CatBoost without ARIMA or market-level features.
+    * Observation:
+      * Off-market MAPE: 11.84% (11.64–12.04%).
+      * Off-market MdAPE: 9.20% (8.98–9.46%).
+      * Median signed error: +0.90%.
+      * Previous best MdAPE: 9.99% using CatBoost + Market.
+      * List-aware ratio CatBoost remained unchanged at 5.36% MAPE and 4.29% MdAPE.
+    * Conclusion: Spatiotemporal comparable-sales features produced a substantial improvement in both mean and median off-market prediction accuracy. Local historical transaction information appears considerably more valuable than the aggregate market features tested so far.
