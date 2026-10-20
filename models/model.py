@@ -9,7 +9,7 @@ from copy import deepcopy
 import numpy as np
 
 from .arima import ArimaResidualModel
-from .catboost import CatBoostRegressor
+from .boost_regressor import CatBoostRegressor, XGBoostRegressor, LightGBMRegressor
 from .components import adapt_component
 from .features import make_features
 from .listing import ListingAdjustment
@@ -27,7 +27,9 @@ DEFAULT_SPECS = DEFAULT_MODELSPECS
 class OffMarketModel:
     """Fit fresh components sequentially to remaining log-price residuals."""
 
-    def __init__(self, modelspecs):
+    def __init__(self, modelspecs, *, center_target=False):
+        self.center_target = center_target
+        self.target_offset_ = 0.0
         self.modelspecs = deepcopy(list(modelspecs))
         if not self.modelspecs:
             raise ValueError("modelspecs must contain at least one component")
@@ -52,7 +54,15 @@ class OffMarketModel:
         prices = train["sold_price"].to_numpy(dtype=float)
         if not len(prices) or not np.isfinite(prices).all() or (prices <= 0).any():
             raise ValueError("Training needs positive finite sold_price values")
-        residual = np.log(prices)
+        
+        log_prices = np.log(prices)
+        self.target_offset_ = (
+            float(np.median(log_prices))
+            if self.center_target
+            else 0.0
+        )
+
+        residual = log_prices - self.target_offset_
         for component, features in self.components:
             X = features.fit_transform(train)
             component.fit(X, residual)
@@ -63,7 +73,11 @@ class OffMarketModel:
     def predict_log(self, homes):
         if not self._fitted:
             raise RuntimeError("Call fit() before predict()")
-        prediction = np.zeros(len(homes), dtype=float)
+        prediction = np.full(
+            len(homes),
+            self.target_offset_,
+            dtype=float,
+        )
         if homes.empty:
             return prediction
         for component, features in self.components:

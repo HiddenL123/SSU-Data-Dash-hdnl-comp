@@ -12,13 +12,13 @@ import data
 import models
 import run
 from models.arima import ArimaResidualModel
-from models.catboost import CatBoostRegressor
+from models.boost_regressor import CatBoostRegressor
 from models.defaults import DEFAULT_PARAMS
 from models.features import make_features
 from models.legacy.gb_models import GBListAwareModel, GBOffMarketModel
-from models.lightgbm import LGBMRegressor
+from models.boost_regressor import LightGBMRegressor
 from models.model import ListAwareModel, OffMarketModel
-from models.xgboost import XGBRegressor
+from models.boost_regressor import XGBoostRegressor
 from test_starter import make_listings
 
 
@@ -113,8 +113,8 @@ def test_catboost_with_optional_arima(arima):
 
 
 @pytest.mark.parametrize("component,params", [
-    (LGBMRegressor, {"n_estimators": 8, "n_jobs": 1}),
-    (XGBRegressor, {"n_estimators": 8, "n_jobs": 1}),
+    (LightGBMRegressor, {"n_estimators": 8, "n_jobs": 1}),
+    (XGBoostRegressor, {"n_estimators": 8, "n_jobs": 1}),
 ])
 def test_other_boosters_and_unknown_categories(component, params):
     model = OffMarketModel([(component, "Xpt", params)]).fit(make_listings(100))
@@ -124,8 +124,8 @@ def test_other_boosters_and_unknown_categories(component, params):
 
 @pytest.mark.parametrize("backend,component,extra", [
     ("catboost", CatBoostRegressor, CAT_PARAMS),
-    ("lightgbm", LGBMRegressor, {"n_estimators": 8, "n_jobs": 1}),
-    ("xgboost", XGBRegressor, {"n_estimators": 8, "n_jobs": 1}),
+    ("lightgbm", LightGBMRegressor, {"n_estimators": 8, "n_jobs": 1}),
+    ("xgboost", XGBoostRegressor, {"n_estimators": 8, "n_jobs": 1}),
 ])
 def test_native_classes_and_legacy_predictions(backend, component, extra):
     from importlib import import_module

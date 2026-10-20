@@ -1,0 +1,109 @@
+{
+  "format_version": 1,
+  "name": "LightGBM",
+  "saved_at_utc": "2026-10-20T23:05:05+00:00",
+  "python_version": "3.13.11",
+  "package_versions": {
+    "joblib": "1.5.3",
+    "catboost": "1.2.10",
+    "scikit-learn": "1.8.0",
+    "pandas": "2.3.3",
+    "numpy": "2.2.6",
+    "statsmodels": "0.15.0"
+  },
+  "model_structure": {
+    "collection": "list",
+    "length": 6,
+    "items": [
+      {
+        "collection": "list",
+        "length": 2,
+        "items": [
+          {
+            "type": "models.model.OffMarketModel"
+          },
+          {
+            "type": "models.direct_listing.DirectListingModel"
+          }
+        ]
+      },
+      {
+        "collection": "list",
+        "length": 2,
+        "items": [
+          {
+            "type": "models.model.OffMarketModel"
+          },
+          {
+            "type": "models.direct_listing.DirectListingModel"
+          }
+        ]
+      },
+      {
+        "collection": "list",
+        "length": 2,
+        "items": [
+          {
+            "type": "models.model.OffMarketModel"
+          },
+          {
+            "type": "models.direct_listing.DirectListingModel"
+          }
+        ]
+      },
+      {
+        "collection": "list",
+        "length": 2,
+        "items": [
+          {
+            "type": "models.model.OffMarketModel"
+          },
+          {
+            "type": "models.direct_listing.DirectListingModel"
+          }
+        ]
+      },
+      {
+        "collection": "list",
+        "length": 2,
+        "items": [
+          {
+            "type": "models.model.OffMarketModel"
+          },
+          {
+            "type": "models.direct_listing.DirectListingModel"
+          }
+        ]
+      },
+      {
+        "collection": "list",
+        "length": 2,
+        "items": [
+          {
+            "type": "models.model.OffMarketModel"
+          },
+          {
+            "type": "models.direct_listing.DirectListingModel"
+          }
+        ]
+      }
+    ]
+  },
+  "metadata": {
+    "features": "Xpt_spatiotemporal",
+    "iterations": 900,
+    "tracks": [
+      "off_market",
+      "list_aware"
+    ],
+    "validation_months": [
+      "2025-12",
+      "2026-01",
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05"
+    ],
+    "mode": "expanding"
+  }
+}

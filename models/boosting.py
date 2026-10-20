@@ -2,16 +2,18 @@
 import pandas as pd
 
 from .arima import ArimaResidualModel
-from .catboost import CatBoostRegressor
-from .lightgbm import LGBMRegressor
-from .xgboost import XGBRegressor
+from .boost_regressor import (
+    CatBoostRegressor,
+    LightGBMRegressor,
+    XGBoostRegressor,
+)
 from .model import OffMarketModel, ListAwareModel, make_model as modular_make_model
 
 
 BOOSTERS = {
     "catboost": CatBoostRegressor,
-    "lightgbm": LGBMRegressor,
-    "xgboost": XGBRegressor,
+    "lightgbm": LightGBMRegressor,
+    "xgboost": XGBoostRegressor,
 }
 
 

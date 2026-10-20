@@ -47,10 +47,10 @@ class GBPropertyModel:
             from catboost import CatBoostRegressor
             return CatBoostRegressor(**self.params)
         if self.algorithm == "lightgbm":
-            from lightgbm import LGBMRegressor
-            return LGBMRegressor(**self.params)
-        from xgboost import XGBRegressor
-        return XGBRegressor(**self.params)
+            from models.boost_regressor import LightGBMRegressor
+            return LightGBMRegressor(**self.params).estimator
+        from models.boost_regressor import XGBoostRegressor
+        return XGBoostRegressor(**self.params).estimator
 
     def fit(self, X, log_prices, categorical_features):
         if self.algorithm == "catboost":

@@ -11,7 +11,7 @@ import data
 import models.gb_models as compatibility
 from models import make_model
 from models.arima import ArimaResidualModel
-from models.catboost import CatBoostRegressor
+from models.boost_regressor import CatBoostRegressor
 from models.legacy import gb_models as legacy
 from models.model import OffMarketModel, ListAwareModel
 from test_starter import make_listings
