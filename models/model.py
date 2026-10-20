@@ -14,8 +14,6 @@ from .components import adapt_component
 from .features import make_features
 from .listing import ListingAdjustment
 from .defaults import DEFAULT_PARAMS
-from models.ratio_comparable_features import RatioComparableFeatures
-from models.features import BoostingFeatures
 
 
 DEFAULT_MODELSPECS = [
@@ -96,50 +94,3 @@ def make_model(track, modelspecs=None, list_aware_implementation = ListAwareMode
     if track == "list_aware":
         return list_aware_implementation(specs)
     raise ValueError(f"Unknown competition track: {track}")
-
-class _ListAwareBoundFeatures:
-    """Bind track and backend to a feature provider."""
-
-    def __init__(self, provider, model):
-        self.provider = provider
-        self.model = model
-
-    def fit_transform(self, homes):
-        return self.provider.fit_transform(
-            homes,
-            track="list_aware",
-            model=self.model,
-        )
-
-    def transform(self, homes):
-        return self.provider.transform(
-            homes,
-            model=self.model,
-        )
-
-    @property
-    def categorical_features(self):
-        return self.provider.categorical_features
-
-
-def _list_aware_xpt(model):
-    return BoostingFeatures(
-        use_remarks=True,
-        include_time=True,
-    )
-
-
-def _list_aware_xpt_spatiotemporal(model):
-    return RatioComparableFeatures(
-        _list_aware_xpt(model),
-        candidates=128,
-        neighbors=32,
-        radius_km=4.0,
-        half_life_days=180,
-    )
-
-
-LIST_AWARE_FEATURE_SETS = {
-    "Xpt": _list_aware_xpt,
-    "Xpt_spatiotemporal": _list_aware_xpt_spatiotemporal,
-}

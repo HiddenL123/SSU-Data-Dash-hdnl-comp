@@ -37,7 +37,7 @@ FEATURE_PROVIDERS = {
     "Xpt": lambda model: PropertyFeatures(model, include_time=True),
     "date_listed": lambda model: DateFeatures(),
     "Xpt_market": lambda model: MarketAugmentedFeatures(make_features("Xpt", model=model)),
-    "Xpt_spatiotemporal": lambda model: ComparableAugmentedFeatures(make_features("Xpt"),
+    "Xpt_spatiotemporal": lambda model: ComparableAugmentedFeatures(make_features("Xpt", model=model),
                                                                    candidates=128,
                                                                    neighbors=32,
                                                                    radius_km=4.0,
@@ -106,5 +106,6 @@ def make_features(
             model,
         )
 
-    # Preserve your existing off-market lookup here.
+    if feature_name not in FEATURE_PROVIDERS:
+        raise ValueError(f"Unknown feature set: {feature_name}")
     return FEATURE_PROVIDERS[feature_name](model)
