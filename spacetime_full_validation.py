@@ -86,7 +86,8 @@ def _check_model(model):
 
 
 def _calibration_snapshot(sales, month, spec, *, cap, seed,
-                          cache_dir, fingerprint, resume):
+                          cache_dir, fingerprint, resume,
+                          pretrained_model=None):
     """One full-strength, chronologically OOT XGBoost refit per unique month."""
     path = cache_dir / f"{month}.csv"
     signature_path = cache_dir / f"{month}.meta.json"
@@ -117,10 +118,18 @@ def _calibration_snapshot(sales, month, spec, *, cap, seed,
                 print(f"    {month}: using cached full-strength OOT residuals", flush=True)
                 return snapshot
 
-    print(f"    {month}: fitting 700-tree-class base model on "
-          f"{len(train):,} earlier sales; predicting "
-          f"{len(held):,} unseen homes", flush=True)
-    base = OffMarketModel(spec, center_target=True).fit(train)
+    if pretrained_model is None:
+        print(f"    {month}: fitting tuned base model on "
+              f"{len(train):,} earlier sales; predicting "
+              f"{len(held):,} unseen homes", flush=True)
+        base = OffMarketModel(spec, center_target=True).fit(train)
+    else:
+        _check_model(pretrained_model)
+        if _jsonable_spec(pretrained_model.modelspecs) != _jsonable_spec(spec):
+            raise ValueError("Incompatible pretrained OOT calibration model")
+        print(f"    {month}: reusing existing fitted validation model "
+              f"for {len(held):,} OOT predictions", flush=True)
+        base = pretrained_model
     hidden = data.hide_answers(held, "off_market")
     predicted = np.asarray(base.predict(hidden), dtype=float)
     sold = held.sold_price.to_numpy(dtype=float)
@@ -228,6 +237,13 @@ def validate_spacetime_shortlist(
             raise ValueError("Validation months must follow the fixed training origin")
 
     models = [pair[0] for pair in fitted_models]
+    # In expanding mode, a previously validated month's fitted baseline
+    # is EXACTLY the model needed to generate that month's out-of-time
+    # calibration predictions for subsequent origins.
+    reusable_calibration_models = (
+        {month: models[i] for i, month in enumerate(periods)}
+        if mode == "expanding" else {}
+    )
     spec = _check_model(models[0])
     config_spec = _jsonable_spec(spec)
     for model in models[1:]:
@@ -238,8 +254,12 @@ def validate_spacetime_shortlist(
     sales = data.load("listings") if listings is None else listings.copy()
     sales["date_sold"] = pd.to_datetime(sales["date_sold"])
     sales["date_listed"] = pd.to_datetime(sales["date_listed"])
-    if sales.ml_num.duplicated().any():
-        raise ValueError("Cannot align results with repeated ml_num identifiers")
+    sale_keys = pd.DataFrame({
+        "month": sales.date_sold.dt.to_period("M").astype(str),
+        "ml_num": sales.ml_num.astype(str),
+    })
+    if sale_keys.duplicated().any():
+        raise ValueError("Cannot align results with repeated month/ml_num keys")
     root = Path(output_dir)
     configuration = {
         "mode": mode, "months": [str(p) for p in periods],
@@ -328,6 +348,7 @@ def validate_spacetime_shortlist(
                     sales, past_month, spec, cap=calibration_cap,
                     seed=seed, cache_dir=cache_dir,
                     fingerprint=fingerprint, resume=resume,
+                    pretrained_model=reusable_calibration_models.get(past_month),
                 )
             calibration_parts.append(snapshots[past_month])
         calibration = pd.concat(calibration_parts, ignore_index=True)
