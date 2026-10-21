@@ -144,11 +144,10 @@ class SpaceTimeResidual:
     def predict(self, homes):
         if self.estimator_ is None:
             raise RuntimeError("Call fit() on chronological calibration residuals")
-        # Guard against inadvertently explaining/predicting the calibration
-        # period itself in this screening use case.
-        dates = residual_coords(homes)[:, 2]
-        if np.any(np.isfinite(dates) & (dates <= np.nanmax(self.training_months_))):
-            raise ValueError("Residual prediction month must be later than calibration months")
+        # Eligibility is governed by the SALE dates of calibration labels,
+        # versus the prediction ORIGIN in the outer runner. We cannot enforce
+        # it here with date_listed: a home sold in October may have been listed
+        # in September, even though its prediction is made at October origin.
         x = self._features(homes)
         if self.variant in ("spline_gam", "tensor_gam"):
             x = self._spline_matrix(x, fit=False)
