@@ -33,9 +33,8 @@ def test_pairwise_pooled_scores_and_reuse(tmp_path, monkeypatch):
 
     def fake_shotgun(*, validation_month, output_dir, **kwargs):
         calls.append(validation_month)
-        path = pd.io.common.stringify_path(output_dir)
         from pathlib import Path
-        folder = Path(path)
+        folder = Path(output_dir)
         folder.mkdir(parents=True, exist_ok=True)
         subset = sales[
             sales.date_sold.dt.to_period("M") == pd.Period(validation_month)
