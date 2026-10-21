@@ -6,6 +6,17 @@ from models.spatiotemporal_features import ComparableAugmentedFeatures
 from models.ratio_comparable_features import RatioComparableFeatures
 from .text_features import TEXT_VARIANTS, make_text_base
 
+# Append these names to either "Xpt_spatiotemporal" or its text variants.
+# The unmodified feature names continue to use the exact legacy comp code.
+COMPARABLE_EXPERIMENTS = {
+    "comp_age_first": {"age_filter_first": True},
+    "comp_type_quota": {"min_same_type_neighbors": 8},
+    "comp_both": {
+        "age_filter_first": True,
+        "min_same_type_neighbors": 8,
+    },
+}
+
 
 class PropertyFeatures:
     """Reuse legacy text vocabulary, geography and native categorical encodings."""
@@ -111,6 +122,37 @@ def make_features(
     model="catboost",
     track="off_market",
 ):
+    # Optional independent comparable-sale ablations, available for the
+    # default selected TF-IDF as well as any registered text representation.
+    # E.g. Xpt_spatiotemporal__selected_binary__comp_type_quota
+    comp_options = {}
+    for suffix, settings in COMPARABLE_EXPERIMENTS.items():
+        tail = "__" + suffix
+        if feature_name.endswith(tail):
+            comp_options = settings
+            feature_name = feature_name[:-len(tail)]
+            break
+
+    if comp_options and feature_name == "Xpt_spatiotemporal":
+        base = (
+            _list_aware_xpt(model)
+            if track == "list_aware"
+            else make_features("Xpt", model=model, track="off_market")
+        )
+        kwargs = dict(
+            candidates=128, neighbors=32, radius_km=4.0, half_life_days=180,
+            **comp_options
+        )
+        if track == "list_aware":
+            return _ListAwareBoundFeatures(
+                RatioComparableFeatures(base, **kwargs), model
+            )
+        if track == "off_market":
+            return _TrackBoundFeatures(
+                ComparableAugmentedFeatures(base, **kwargs), model, "off_market"
+            )
+        raise ValueError(f"Unknown competition track: {track}")
+
     # Controlled text experiments use ordinary MODEL_SPECS feature identifiers,
     # so no model-factory or estimator changes are needed.
     # Example: "Xpt_spatiotemporal__full_binary".
@@ -122,6 +164,7 @@ def make_features(
         comparable_kwargs = dict(
             candidates=128, neighbors=32,
             radius_km=4.0, half_life_days=180,
+            **comp_options,
         )
         if track == "list_aware":
             provider = RatioComparableFeatures(base, **comparable_kwargs)
@@ -133,6 +176,9 @@ def make_features(
                 track="off_market",
             )
         raise ValueError(f"Unknown competition track: {track}")
+
+    if comp_options:
+        raise ValueError(f"Comparable ablation requires Xpt_spatiotemporal: {feature_name}")
 
     if (
         track == "list_aware"
