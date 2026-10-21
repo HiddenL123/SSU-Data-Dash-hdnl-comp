@@ -94,6 +94,18 @@ class ComparableSalesFeatures:
             raise ValueError('Bandwidths and max_age_days must be positive')
         self._history = None
 
+    def __setstate__(self, state):
+        """Load saved legacy comparable features without changing predictions.
+
+        joblib/pickle restores instance attributes without calling __init__.
+        Models saved before the age-first and type-quota experiments therefore
+        lack these two new attributes. Their historical behaviour is exactly
+        age_filter_first=False and min_same_type_neighbors=0.
+        """
+        self.__dict__.update(state)
+        self.__dict__.setdefault("age_filter_first", False)
+        self.__dict__.setdefault("min_same_type_neighbors", 0)
+
     def fit(self, sales: pd.DataFrame):
         required = {'date_sold','sold_price','latitude','longitude', 'house_area','house_type_name'}
         missing = required - set(sales.columns)
