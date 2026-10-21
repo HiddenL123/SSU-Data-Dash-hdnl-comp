@@ -4,6 +4,7 @@ from .gb_features import BoostingFeatures, square_feet
 from models.market_features import MarketAugmentedFeatures
 from models.spatiotemporal_features import ComparableAugmentedFeatures
 from models.ratio_comparable_features import RatioComparableFeatures
+from .text_features import TEXT_VARIANTS, make_text_base
 
 
 class PropertyFeatures:
@@ -97,6 +98,25 @@ def make_features(
     model="catboost",
     track="off_market",
 ):
+    # Controlled text experiments use ordinary MODEL_SPECS feature identifiers,
+    # so no model-factory or estimator changes are needed.
+    # Example: "Xpt_spatiotemporal__full_binary".
+    if feature_name.startswith("Xpt_spatiotemporal__"):
+        variant = feature_name.removeprefix("Xpt_spatiotemporal__")
+        if variant not in TEXT_VARIANTS:
+            raise ValueError(f"Unknown text variant: {variant}")
+        base = make_text_base(variant, include_time=True)
+        comparable_kwargs = dict(
+            candidates=128, neighbors=32,
+            radius_km=4.0, half_life_days=180,
+        )
+        if track == "list_aware":
+            provider = RatioComparableFeatures(base, **comparable_kwargs)
+            return _ListAwareBoundFeatures(provider, model)
+        if track == "off_market":
+            return ComparableAugmentedFeatures(base, **comparable_kwargs)
+        raise ValueError(f"Unknown competition track: {track}")
+
     if (
         track == "list_aware"
         and feature_name in LIST_AWARE_FEATURE_SETS
