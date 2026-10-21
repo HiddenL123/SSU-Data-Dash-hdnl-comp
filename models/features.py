@@ -46,17 +46,23 @@ FEATURE_PROVIDERS = {
 
 }
 
-class _ListAwareBoundFeatures:
-    """Bind track and backend to a feature provider."""
+class _TrackBoundFeatures:
+    """Pass the correct track and estimator backend through wrapped providers.
 
-    def __init__(self, provider, model):
+    OffMarketModel and DirectListingModel call fit_transform(train) without
+    keyword arguments, so wrappers must not silently default to CatBoost's
+    object-string categorical encoding when the estimator uses XGBoost/LightGBM.
+    """
+
+    def __init__(self, provider, model, track):
         self.provider = provider
         self.model = model
+        self.track = track
 
     def fit_transform(self, homes):
         return self.provider.fit_transform(
             homes,
-            track="list_aware",
+            track=self.track,
             model=self.model,
         )
 
@@ -69,6 +75,13 @@ class _ListAwareBoundFeatures:
     @property
     def categorical_features(self):
         return self.provider.categorical_features
+
+
+class _ListAwareBoundFeatures(_TrackBoundFeatures):
+    """Preserve the previous list-aware feature-provider interface."""
+
+    def __init__(self, provider, model):
+        super().__init__(provider, model, track="list_aware")
 
 
 def _list_aware_xpt(model):
@@ -114,7 +127,11 @@ def make_features(
             provider = RatioComparableFeatures(base, **comparable_kwargs)
             return _ListAwareBoundFeatures(provider, model)
         if track == "off_market":
-            return ComparableAugmentedFeatures(base, **comparable_kwargs)
+            return _TrackBoundFeatures(
+                ComparableAugmentedFeatures(base, **comparable_kwargs),
+                model,
+                track="off_market",
+            )
         raise ValueError(f"Unknown competition track: {track}")
 
     if (
