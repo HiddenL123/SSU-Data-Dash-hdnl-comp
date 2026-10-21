@@ -184,3 +184,36 @@ def test_runner_rejects_confirmation_period(tmp_path):
             months=["2026-01"], output_dir=tmp_path,
             listings=make_listings(10),
         )
+
+def test_legacy_joblib_saved_comparables_load_without_new_attributes(tmp_path):
+    """Old pickles omit fields introduced by the age-first/type experiments."""
+    import joblib
+
+    train = make_listings(60)
+    query = make_listings(3, seed=32).assign(
+        date_listed=pd.Timestamp("2026-06-01")
+    )
+    original = ComparableSalesFeatures().fit(train)
+    expected = original.transform(query)
+    del original.age_filter_first
+    del original.min_same_type_neighbors
+
+    path = tmp_path / "legacy_comparables.joblib"
+    joblib.dump(original, path)
+    restored = joblib.load(path)
+    assert restored.age_filter_first is False
+    assert restored.min_same_type_neighbors == 0
+    pd.testing.assert_frame_equal(restored.transform(query), expected, check_exact=True)
+
+
+def test_modern_joblib_saved_comparable_settings_survive(tmp_path):
+    import joblib
+
+    modern = ComparableSalesFeatures(
+        age_filter_first=True, min_same_type_neighbors=8
+    )
+    path = tmp_path / "modern_comparables.joblib"
+    joblib.dump(modern, path)
+    restored = joblib.load(path)
+    assert restored.age_filter_first is True
+    assert restored.min_same_type_neighbors == 8
