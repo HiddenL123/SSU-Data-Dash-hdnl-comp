@@ -131,3 +131,25 @@ def test_screen_rejects_confirmatory_dates(tmp_path):
             features=("baseline",), residuals=(), listings=_sales(20),
             output_dir=tmp_path,
         )
+
+def test_screen_control_matches_existing_centered_offmarket_model():
+    """Guard against a different target/feature encoding in the fast runner."""
+    from models.boost_regressor import XGBoostRegressor
+    from models.model import OffMarketModel
+    from spacetime_shotgun import _make_estimator
+
+    sales = _sales(160)
+    train = sales.loc[sales.date_sold < pd.Timestamp("2025-11-01")]
+    future = data.hide_answers(
+        sales.loc[sales.date_sold >= pd.Timestamp("2025-11-01")].iloc[:5],
+        "off_market",
+    )
+    assert len(train) > 30 and not future.empty
+    params = {"n_estimators": 10, "max_depth": 3, "n_jobs": 4}
+    reference = OffMarketModel([
+        (XGBoostRegressor, "Xpt_spatiotemporal__selected_binary", params),
+    ], center_target=True).fit(train).predict(future)
+    screen = _train_and_predict(
+        train, future, params, screen_trees=10
+    )
+    np.testing.assert_allclose(screen, reference, rtol=3e-5, atol=1)
