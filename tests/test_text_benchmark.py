@@ -114,3 +114,47 @@ def test_development_runner_blocks_final_holdout(tmp_path):
             months=["2026-01"], listings=sample_sales(40),
             output_dir=tmp_path,
         )
+
+@pytest.mark.parametrize("track", ["off_market", "list_aware"])
+@pytest.mark.parametrize("backend", ["catboost", "lightgbm", "xgboost"])
+@pytest.mark.parametrize("variant", TEXT_VARIANTS)
+def test_text_variant_categorical_dtypes_match_backend(track, backend, variant):
+    """Catch silent CatBoost defaults in off-market comparable/text wrappers."""
+    train = sample_sales(95)
+    homes = data.hide_answers(sample_sales(4), track)
+    feature_name = f"Xpt_spatiotemporal__{variant}"
+    features = make_features(feature_name, model=backend, track=track)
+    fitted = features.fit_transform(train)
+    future = features.transform(homes)
+    for X in (fitted, future):
+        assert list(X.columns) == list(fitted.columns)
+        for name in (
+            "house_type_name", "house_style", "municipality", "community", "garage"
+        ):
+            if backend == "catboost":
+                assert pd.api.types.is_object_dtype(X[name].dtype)
+            else:
+                assert isinstance(X[name].dtype, pd.CategoricalDtype)
+
+
+@pytest.mark.parametrize("track", ["off_market", "list_aware"])
+def test_xgboost_text_binary_runs_through_model_factory(track):
+    """Exercise real XGBoost fit/predict, not only feature-frame construction."""
+    from models.boost_regressor import XGBoostRegressor
+
+    train = sample_sales(120)
+    homes = data.hide_answers(sample_sales(5), track)
+    spec = [(
+        XGBoostRegressor,
+        "Xpt_spatiotemporal__selected_binary",
+        {"n_estimators": 5, "n_jobs": 1},
+    )]
+    model = (
+        OffMarketModel(spec, center_target=True)
+        if track == "off_market"
+        else DirectListingModel(target="ratio", modelspecs=spec)
+    )
+    predictions = model.fit(train).predict(homes)
+    assert predictions.shape == (len(homes),)
+    assert np.isfinite(predictions).all()
+    assert (predictions > 0).all()
