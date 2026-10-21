@@ -134,7 +134,9 @@ class ComparableSalesFeatures:
         selected = hist.iloc[ix[0]]
         age = cutoff_day - selected['sold_day'].to_numpy(dtype=float)
         valid = (age >= 0) & (age <= self.max_age_days)
-        if not np.any(valid):
+        if not np.any(valid) and not (
+            self.min_same_type_neighbors and same_type_tree is not None
+        ):
             result[5:7] = 0
             return result
         d, age = d[valid], age[valid]
@@ -163,6 +165,9 @@ class ComparableSalesFeatures:
             d = combined_distances[is_new]
             age = cutoff_day - selected['sold_day'].to_numpy(dtype=float)
 
+        if len(selected) == 0:
+            result[5:7] = 0
+            return result
         is_type = (selected['type'].to_numpy() == query_type).astype(float)
         delta_area = np.abs(selected['log_area'].to_numpy() - query_area)
         # Rank by combined similarity instead of geographic proximity alone.
