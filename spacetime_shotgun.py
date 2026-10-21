@@ -52,6 +52,13 @@ XGB_TUNED = {
 }
 
 FEATURE_SET = "Xpt_spatiotemporal__selected_binary"
+COMPARABLE_VARIANTS = {
+    "comp_age_first": "__comp_age_first",
+    "comp_type_quota": "__comp_type_quota",
+    "comp_both": "__comp_both",
+}
+SCREEN_FEATURE_VARIANTS = (*FEATURE_VARIANTS, *COMPARABLE_VARIANTS)
+
 
 
 def _cap(df, n, seed):
@@ -92,9 +99,15 @@ def _base_features(train, homes):
 
 def _train_and_predict(train, homes, params, screen_trees, *, variant="baseline",
                        X_train=None, X_homes=None):
-    if X_train is None or X_homes is None:
+    if variant in COMPARABLE_VARIANTS:
+        provider = make_features(
+            FEATURE_SET + COMPARABLE_VARIANTS[variant],
+            model="xgboost", track="off_market"
+        )
+        X_train, X_homes = provider.fit_transform(train), provider.transform(homes)
+    elif X_train is None or X_homes is None:
         X_train, X_homes = _base_features(train, homes)
-    if variant != "baseline":
+    if variant != "baseline" and variant not in COMPARABLE_VARIANTS:
         add = SpaceTimeAddon(variant).fit(train)
         tr = add.transform(train, X_train)
         te = add.transform(homes, X_homes)
@@ -148,7 +161,7 @@ def run_shotgun(*, validation_month="2025-10",
                 train_cap=10000, validation_cap=650,
                 calibration_cap=650, calibration_folds=2,
                 screen_trees=220, seed=42, params=None,
-                features=FEATURE_VARIANTS, residuals=RESIDUAL_VARIANTS,
+                features=SCREEN_FEATURE_VARIANTS, residuals=RESIDUAL_VARIANTS,
                 residual_strength=0.5, output_dir="outputs/spacetime_shotgun",
                 listings=None):
     """Run independent feature and residual screens on one development fold."""
@@ -162,7 +175,7 @@ def run_shotgun(*, validation_month="2025-10",
     features, residuals = tuple(features), tuple(residuals)
     if "baseline" not in features or len(set(features)) != len(features):
         raise ValueError("Feature variants must include exactly one baseline")
-    if any(x not in FEATURE_VARIANTS for x in features):
+    if any(x not in SCREEN_FEATURE_VARIANTS for x in features):
         raise ValueError(f"Unknown feature variant: {features}")
     if len(set(residuals)) != len(residuals) or any(
         x not in RESIDUAL_VARIANTS for x in residuals
@@ -305,8 +318,8 @@ def main():
     parser.add_argument("--calibration-cap", type=int, default=650)
     parser.add_argument("--calibration-folds", type=int, default=2)
     parser.add_argument("--screen-trees", type=int, default=220)
-    parser.add_argument("--features", nargs="+", choices=FEATURE_VARIANTS,
-                        default=list(FEATURE_VARIANTS))
+    parser.add_argument("--features", nargs="+", choices=SCREEN_FEATURE_VARIANTS,
+                        default=list(SCREEN_FEATURE_VARIANTS))
     parser.add_argument("--residuals", nargs="*", choices=RESIDUAL_VARIANTS,
                         default=list(RESIDUAL_VARIANTS))
     parser.add_argument("--params", type=Path,
