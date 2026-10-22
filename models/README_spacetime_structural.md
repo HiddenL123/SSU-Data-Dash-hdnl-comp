@@ -10,18 +10,25 @@ research runners, and **tests/**.
 | `models/spacetime_structural_residuals.py` | Local spatiotemporal kernel, house-type-aware kernel, spatial Matérn GP, space-time Matérn GP |
 | `models/spacetime_gpboost.py` | Independent joint GPBoost (boosted trees + Vecchia-approximated GP), optional package |
 | `models/spacetime_screen_residuals.py` | Existing Tensor GAM used as an incumbent correction, not duplicated |
-| `spacetime_structural_shotgun.py` | Pilot-only sampling, chronological evaluation, caches, bootstrap intervals, model triage |
+| `spacetime_structural_shotgun.py` | Reusable pilot-only sampling, chronological evaluation, caches, bootstrap intervals, model triage |
+| `spacetime_fast.ipynb` | **Primary interactive entry point**: initial smoke experiment, plots, optional three-month test |
 | `tests/test_spacetime_structural_shotgun.py` | Synthetic checks including no-target features, finite GP output, missing optional GPBoost and resumption |
 
 ## Run
 
-From the repository root, first run a very small smoke test:
+**Preferred workflow:** Open `spacetime_fast.ipynb` and run only the appended
+**Structural spatiotemporal shotgun** cells. They run the initial one-month
+experiment, display comparisons and failures, and expose an opt-in
+`RUN_STRUCTURAL_THREE_MONTH` flag. Previous feature-screening cells do
+not need to be rerun.
+
+Alternatively, from the repository root, run a smoke test without Jupyter:
 
 ```bash
 python spacetime_structural_shotgun.py --months 2025-10 --train-cap 5000 --trees 250 --validation-cap 250
 ```
 
-Then run the three-month, 500-tree development pilot:
+Then run the three-month, 500-tree development pilot from the CLI if preferred:
 
 ```bash
 python spacetime_structural_shotgun.py --months 2025-09 2025-10 2025-11
