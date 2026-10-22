@@ -59,3 +59,33 @@ term. Its default pilot tree settings are not comparable in optimization
 effort to a fully tuned XGBoost; deprioritization at these defaults is not
 proof that a tuned GPBoost could never win. Failed or missing-dependency
 candidates are excluded from score rankings.
+
+## Chronological Matérn covariance tuning
+
+The Matérn pilot previously used hard-coded 5 km spatial correlation, 2-month
+temporal correlation (space-time variant), latent variance 0.003, residual
+noise variance 0.012, and correction strength 0.5. Its boosting features,
+model and chronological splits are not altered by this experiment.
+
+Open **`spacetime_fast.ipynb`** and run the final **Tune Matérn** cells:
+
+1. `run_matern_tuning(...)` tunes spatial and space-time Matérn parameters
+   on May, June and July 2025 only, with earlier out-of-time XGBoost errors.
+   It uses a bounded seeded random search (one historical-default baseline
+   plus 19 kernel settings per family). Each trial reuses the same cached
+   XGBoost monthly validation and calibration predictions.
+2. Turn on `RUN_MATERN_LATER_COMPARISON` to evaluate the *frozen* selected
+   kernels against XGBoost splines+geo and its Tensor GAM on Sep–Nov 2025.
+
+Outputs go to `outputs/spacetime_matern_chronological_tuning/`:
+`setup.json`, `trials.csv`, `best_matern.json`, monthly XGBoost caches,
+and on confirmation `confirmation_pooled.csv`,
+`confirmation_monthly.csv`, `confirmation_predictions.csv`.
+
+The objective is `0.65 * pooled MdAPE + 0.35 * pooled MAPE`, all in
+percentage-error units. Earlier OOT calibration sales train the GP; tune-month
+outcomes select the hyperparameters. Later folds reuse the winning parameters
+without further optimization. Neither period is a genuinely untouched final
+test set: the earlier development months may have informed prior work, and
+Sep–Nov have already been inspected. Do not claim these scores match the
+full-history 700-tree six-month XGBoost benchmark.
