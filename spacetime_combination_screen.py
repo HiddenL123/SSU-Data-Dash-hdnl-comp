@@ -16,7 +16,7 @@ import pandas as pd
 import data
 from models.features import make_features
 from models.spacetime_screen_residuals import SpaceTimeResidual
-from spacetime_shotgun import FEATURE_SET, XGB_TUNED, _cap, _make_estimator, _metric
+from spacetime_fast import FEATURE_SET, XGB_TUNED, _cap, _make_estimator, _metric
 
 # Same base selected-binary BoW model; __st_ suffix adds families to its features.
 COMBINATIONS = {

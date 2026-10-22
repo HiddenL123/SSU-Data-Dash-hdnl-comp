@@ -7,7 +7,7 @@ import data
 from models.features import make_features
 from models.spacetime_screen_features import SpaceTimeAddon, FEATURE_VARIANTS
 from models.spacetime_screen_residuals import SpaceTimeResidual, RESIDUAL_VARIANTS
-from spacetime_shotgun import (
+from spacetime_fast import (
     run_shotgun, _calibration_data, _train_and_predict, SCREEN_FEATURE_VARIANTS
 )
 from test_starter import make_listings
@@ -80,7 +80,7 @@ def test_residual_models_produce_finite_predictions(variant):
 
 
 def test_calibration_fits_only_past_sales(monkeypatch):
-    import spacetime_shotgun as module
+    import spacetime_fast as module
     sales = _sales(900)
     seen = []
 
@@ -136,7 +136,7 @@ def test_screen_control_matches_existing_centered_offmarket_model():
     """Guard against a different target/feature encoding in the fast runner."""
     from models.boost_regressor import XGBoostRegressor
     from models.model import OffMarketModel
-    from spacetime_shotgun import _make_estimator
+    from spacetime_fast import _make_estimator
 
     sales = _sales(160)
     train = sales.loc[sales.date_sold < pd.Timestamp("2025-11-01")]
