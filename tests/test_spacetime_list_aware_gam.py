@@ -163,3 +163,50 @@ def test_different_settings_cannot_reuse_predictions(tmp_path):
         compare_list_aware_spline_gam(
             baseline, models, **{**args, "residual_strength": 0.75}
         )
+
+
+def test_catboost_optional_and_added_after_cache(tmp_path, monkeypatch):
+    """The absent Huber reference must not block XGBoost training or resume.
+
+    When a Huber model is found later, existing XGBoost model predictions must
+    be reused without new expensive XGBoost fits.
+    """
+    sales = _sales()
+    months = ("2025-12",)
+    baseline, models, cats = _reference(sales, months)
+    kwargs = dict(
+        months=months, listings=sales, output_dir=tmp_path,
+        calibration_months=1, calibration_cap=25,
+        bootstrap_repeats=15, resume=True,
+    )
+
+    without = compare_list_aware_spline_gam(
+        baseline, models, catboost_model_name=None, **kwargs,
+    )
+    pooled, monthly, _, predictions = without
+    assert len(pooled) == 5 and len(monthly) == 5
+    assert len(predictions) == 5 * len(baseline)
+    assert "catboost_huber" not in set(pooled.variant)
+    assert "delta_catboost_mdape_pp" not in pooled.columns
+
+    def never_train(self, train):
+        raise AssertionError("Recovering CatBoost must not retrain XGBoost")
+
+    monkeypatch.setattr(DirectListingModel, "fit", never_train)
+    with_cat = compare_list_aware_spline_gam(
+        baseline, models, catboost_models=cats, **kwargs,
+    )
+    pooled2, monthly2, _, predictions2 = with_cat
+    assert len(pooled2) == 6 and len(monthly2) == 6
+    assert len(predictions2) == 6 * len(baseline)
+    assert "delta_catboost_mdape_pp" in pooled2.columns
+    for variant in ("baseline", "splines", "splines_geo",
+                    "splines_tensor_gam", "splines_geo_tensor_gam"):
+        first = pooled.loc[pooled.variant == variant].iloc[0]
+        second = pooled2.loc[pooled2.variant == variant].iloc[0]
+        assert first.mdape == pytest.approx(second.mdape)
+        assert first.mape == pytest.approx(second.mape)
+    assert pooled2.loc[
+        pooled2.variant == "catboost_huber",
+        "delta_catboost_mdape_pp",
+    ].iloc[0] == pytest.approx(0)
