@@ -1,6 +1,8 @@
 """Chronological shotgun: genuine spatial models vs matched tuned XGBoost.
 
-Pilot on pre-Dec-2025 development months only. A cheap screen does NOT prove
+Pilot on pre-Dec-2025 development months only. Matched XGBoost uses
+splines+geographic context; a Tensor GAM control is fit on OOT residuals.
+A cheap screen does NOT prove
 a method cannot beat the 700-tree full-history incumbent; it prioritizes
 candidates for expensive full-history evaluation.
 
@@ -27,9 +29,12 @@ from spacetime_fast import _cap, XGB_TUNED
 from spacetime_combination_screen import _predict as predict_xgb
 from models.spacetime_structural_residuals import local_kernel, matern_gp
 from models.spacetime_gpboost import gpboost_joint
+from models.spacetime_structural_features import SPLINE_GEO_SUFFIX
+from models.spacetime_screen_residuals import SpaceTimeResidual
 
-VERSION = 1
+VERSION = 2
 METHODS = (
+    "xgb_tensor_gam",
     "xgb_st_kernel",
     "xgb_st_kernel_type",
     "xgb_spatial_matern",
@@ -202,6 +207,7 @@ def run_structural_shotgun(
         gpboost_rounds=gpboost_rounds, max_gp_points=max_gp_points,
         residual_strength=residual_strength, methods=list(methods),
         seed=seed, bootstrap_repeats=bootstrap_repeats, xgb_params=XGB_TUNED,
+        xgb_feature_suffix=SPLINE_GEO_SUFFIX,
     )
     # Store an input fingerprint; do not resume experiments on changed rows.
     digest = hashlib.sha256(
@@ -239,7 +245,7 @@ def run_structural_shotgun(
         t0 = perf_counter()
         estimated, _ = predict_xgb(
             past, data.hide_answers(held, "off_market"),
-            suffix="", params=XGB_TUNED, trees=trees,
+            suffix=SPLINE_GEO_SUFFIX, params=XGB_TUNED, trees=trees,
         )
         result = _frame(month, held, "baseline", estimated, perf_counter()-t0)
         _save(path, result)
@@ -291,7 +297,11 @@ def run_structural_shotgun(
                         ignore_index=True,
                     )
                     r = calibration.log_error.to_numpy(dtype=float)
-                    if name in ("xgb_st_kernel", "xgb_st_kernel_type"):
+                    if name == "xgb_tensor_gam":
+                        correction = SpaceTimeResidual(
+                            "tensor_gam", seed=seed
+                        ).fit(calibration, r).predict(hidden)
+                    elif name in ("xgb_st_kernel", "xgb_st_kernel_type"):
                         correction = local_kernel(
                             calibration, r, hidden,
                             same_type=(name == "xgb_st_kernel_type"),
@@ -336,6 +346,36 @@ def run_structural_shotgun(
     pooled, monthly = _report(
         [matched], months=periods, repeats=bootstrap_repeats, seed=seed,
     )
+    # Keep the stronger spline+geo+Tensor GAM reference explicit. This is
+    # only a matched reduced-data pilot, NOT the full-history 7.4857% result.
+    if "xgb_tensor_gam" in completed:
+        champion = matched[matched.variant == "xgb_tensor_gam"].set_index(
+            INDEX
+        ).sort_index()
+        y = champion.sold_price.to_numpy(dtype=float)
+        ea = 100 * np.abs(champion.predicted_price.to_numpy(dtype=float)-y)/y
+        for i, row in pooled.iterrows():
+            other = matched[matched.variant == row.variant].set_index(
+                INDEX
+            ).loc[champion.index]
+            eb = 100 * np.abs(other.predicted_price.to_numpy(dtype=float)-y)/y
+            pooled.loc[i, "delta_vs_tensor_mdape_pp"] = (
+                np.median(eb) - np.median(ea)
+            )
+            pooled.loc[i, "delta_vs_tensor_mape_pp"] = np.mean(eb-ea)
+        for i, row in monthly.iterrows():
+            ctl = champion.xs(row.month, level="month")
+            this = matched.loc[
+                (matched.month == row.month) &
+                (matched.variant == row.variant)
+            ].set_index("ml_num").loc[ctl.index]
+            truth = ctl.sold_price.to_numpy(dtype=float)
+            ea_m = 100*np.abs(ctl.predicted_price.to_numpy(dtype=float)-truth)/truth
+            eb_m = 100*np.abs(this.predicted_price.to_numpy(dtype=float)-truth)/truth
+            monthly.loc[i, "delta_vs_tensor_mdape_pp"] = (
+                np.median(eb_m) - np.median(ea_m)
+            )
+            monthly.loc[i, "delta_vs_tensor_mape_pp"] = np.mean(eb_m-ea_m)
     _save(root / "predictions.csv", result)
     _save(root / "pooled_summary.csv", pooled)
     _save(root / "monthly_summary.csv", monthly)
@@ -347,6 +387,11 @@ def run_structural_shotgun(
         "delta_mdape_pp", "delta_mape_pp",
         "months_better_mdape", "runtime_seconds", "triage",
     ]].to_string(index=False), flush=True)
+    if "delta_vs_tensor_mdape_pp" in pooled:
+        print("\nADDITIONAL CHECK versus matched spline+geo+Tensor GAM:")
+        print(pooled[[
+            "variant", "delta_vs_tensor_mdape_pp", "delta_vs_tensor_mape_pp"
+        ]].to_string(index=False))
     print(f"Saved in {root}", flush=True)
     return pooled, monthly, result, pd.DataFrame(failures)
 
