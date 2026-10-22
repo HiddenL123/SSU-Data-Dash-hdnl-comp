@@ -61,6 +61,10 @@ def test_opt_in_features_keep_same_inference_schema(suffix):
 
 
 def test_full_history_compares_independently_and_resumes(tmp_path, monkeypatch):
+    # The old shotgun module may be cached in an existing notebook kernel.
+    # Its obsolete registry must not reject variants supported by this runner.
+    import spacetime_shotgun
+    monkeypatch.setattr(spacetime_shotgun, "SCREEN_FEATURE_VARIANTS", ("baseline",))
     sales = _sales()
     months = ("2025-12", "2026-01")
     preds, models = _reference(sales, months)
