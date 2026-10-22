@@ -21,7 +21,7 @@ COMPARABLE_EXPERIMENTS = {
 
 
 class SpaceTimeExperimentFeatures:
-    """Off-market experiment wrapper; preserves fitted base XGBoost columns.
+    """Experiment wrapper for either track; preserves fitted base XGBoost columns.
 
     A feature name ending with __st_spacetime_splines, or multiple add-ons
     separated by '+', works inside the original OffMarketModel pipeline.
@@ -181,12 +181,12 @@ def make_features(
     model="catboost",
     track="off_market",
 ):
-    # Opt-in full-model spatial feature arms. Allow mixtures such as
+    # Opt-in spatial feature arms for both tracks. Allow mixtures such as
     # Xpt_spatiotemporal__selected_binary__comp_type_quota__st_spacetime_splines+geo_context.
     # Resolve the ordinary/comp provider first, then append spatial columns.
     if "__st_" in feature_name:
-        if track != "off_market":
-            raise ValueError("Spatiotemporal experiment add-ons are off_market only")
+        if track not in ("off_market", "list_aware"):
+            raise ValueError(f"Unknown track for spatiotemporal add-ons: {track}")
         ordinary_name, extra_names = feature_name.rsplit("__st_", 1)
         if not ordinary_name or not extra_names:
             raise ValueError("Invalid spatiotemporal feature experiment identifier")

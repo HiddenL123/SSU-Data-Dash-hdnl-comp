@@ -150,9 +150,9 @@ def _calibration_snapshot(sales, month, spec, *, cap, seed,
     return snapshot
 
 
-def _validate_baseline_reference(reference, predictions, month):
+def _validate_baseline_reference(reference, predictions, month, *, track="off_market"):
     rows = reference.loc[
-        (reference.track == "off_market") &
+        (reference.track == track) &
         (reference.month.astype(str) == str(month))
     ]
     if len(rows) != len(predictions) or rows.ml_num.duplicated().any():
