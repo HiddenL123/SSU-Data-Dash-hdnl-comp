@@ -376,6 +376,35 @@ def run_structural_shotgun(
                 np.median(eb_m) - np.median(ea_m)
             )
             monthly.loc[i, "delta_vs_tensor_mape_pp"] = np.mean(eb_m-ea_m)
+
+        # Triage against the stronger incumbent rather than automatically
+        # promoting methods that merely beat XGBoost without Tensor GAM.
+        for i, row in pooled.iterrows():
+            if row.variant == "baseline":
+                pooled.loc[i, "triage"] = "reference_xgb_splines_geo"
+                continue
+            if row.variant == "xgb_tensor_gam":
+                pooled.loc[i, "triage"] = "incumbent_tensor_gam"
+                continue
+            months_for_model = monthly[monthly.variant == row.variant]
+            better = (months_for_model.delta_vs_tensor_mdape_pp < 0).sum()
+            worse_both = (
+                (months_for_model.delta_vs_tensor_mdape_pp > 0) &
+                (months_for_model.delta_vs_tensor_mape_pp > 0)
+            ).sum()
+            md = row.delta_vs_tensor_mdape_pp
+            ma = row.delta_vs_tensor_mape_pp
+            if len(periods) > 1 and better >= len(periods)-1 and (
+                md < -0.08 or ma < -0.10
+            ):
+                outcome = "promising_vs_tensor"
+            elif len(periods) >= 3 and worse_both >= len(periods)-1 and (
+                md > 0.12 and ma > 0.12
+            ):
+                outcome = "deprioritize_pilot"
+            else:
+                outcome = "inconclusive"
+            pooled.loc[i, "triage"] = outcome
     _save(root / "predictions.csv", result)
     _save(root / "pooled_summary.csv", pooled)
     _save(root / "monthly_summary.csv", monthly)
