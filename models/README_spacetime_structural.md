@@ -17,15 +17,21 @@ research runners, and **tests/**.
 ## Run
 
 **Preferred workflow:** Open `spacetime_fast.ipynb` and run only the appended
-**Structural spatiotemporal shotgun** cells. They run the initial one-month
+**Structural spatiotemporal shotgun** cells. They provide the initial one-month
 experiment, display comparisons and failures, and expose an opt-in
-`RUN_STRUCTURAL_THREE_MONTH` flag. Previous feature-screening cells do
-not need to be rerun.
+`RUN_STRUCTURAL_THREE_MONTH` flag. Both previously completed runs default to off;
+set the appropriate switch to True when needed. **GPBoost is archived and
+excluded from the active notebook methods** after its tree-only and combined
+models both produced 48.7828% MdAPE on October's smoke fold. Its code and
+previous saved smoke predictions remain available for diagnostics. Previous
+feature-screening cells do not need to be rerun.
 
-Alternatively, from the repository root, run a smoke test without Jupyter:
+Alternatively, from the repository root, run a smoke test without Jupyter.
+The CLI defaults still contain GPBoost; pass `--methods` if you want the
+same GPBoost-free active set as the notebook:
 
 ```bash
-python spacetime_structural_shotgun.py --months 2025-10 --train-cap 5000 --trees 250 --validation-cap 250
+python spacetime_structural_shotgun.py --months 2025-10 --train-cap 5000 --trees 250 --validation-cap 250 --methods xgb_tensor_gam xgb_st_kernel xgb_st_kernel_type xgb_spatial_matern xgb_st_matern --output-dir outputs/spacetime_structural_cli_no_gpboost
 ```
 
 Then run the three-month, 500-tree development pilot from the CLI if preferred:
