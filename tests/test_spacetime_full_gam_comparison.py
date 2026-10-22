@@ -68,6 +68,19 @@ def test_two_full_spline_gam_combinations_and_resume(tmp_path, monkeypatch):
     }
     assert len(monthly) == 10
     assert set(predictions.arm) == {"feature", "residual"}
+    for corrected_name, parent in (
+        ("splines_tensor_gam", "splines"),
+        ("splines_geo_tensor_gam", "splines_geo"),
+    ):
+        child = pooled.loc[pooled.variant == corrected_name].iloc[0]
+        base = pooled.loc[pooled.variant == parent].iloc[0]
+        assert child.parent_model == parent
+        assert child.delta_parent_mdape_pp == pytest.approx(
+            child.mdape - base.mdape
+        )
+        assert child.delta_parent_mape_pp == pytest.approx(
+            child.mape - base.mape
+        )
     assert predictions.groupby(["arm", "variant", "month"]).size().nunique() == 1
     assert (predictions.predicted_price > 0).all()
     assert (tmp_path / "gam" / "by_month" / "2026-01" /
