@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 import data
-from models.boost_regressor import XGBoostRegressor
+from models.boost_regressor import XGBoostRegressor, CatBoostRegressor
 from models.direct_listing import DirectListingModel
 from models.features import make_features
 from spacetime_list_aware_gam import compare_list_aware_spline_gam
@@ -40,7 +40,23 @@ def _reference(sales, months):
             "sold_price": held.sold_price.to_numpy(),
             "predicted_price": predicted,
         }))
-    return pd.concat(records, ignore_index=True), models
+    # Independent saved-model-style CatBoost Huber reference; this model is
+    # NEVER an input to XGBoost/GAM training.
+    cat_specs = [(
+        CatBoostRegressor, "Xpt_spatiotemporal",
+        {"iterations": 8, "depth": 3, "learning_rate": 0.04,
+         "loss_function": "Huber:delta=0.05", "random_seed": 42,
+         "thread_count": 1, "allow_writing_files": False,
+         "verbose": False},
+    )]
+    cats = []
+    for month in pd.PeriodIndex(months, freq="M"):
+        earlier = sales.loc[sales.date_sold < month.start_time]
+        fitted = DirectListingModel(
+            target="ratio", modelspecs=cat_specs
+        ).fit(earlier)
+        cats.append([None, fitted])
+    return pd.concat(records, ignore_index=True), models, cats
 
 
 @pytest.mark.parametrize("suffix", [
@@ -70,20 +86,28 @@ def test_full_list_aware_experiment_and_resume(tmp_path, monkeypatch):
     import spacetime_list_aware_gam as runner
     sales = _sales()
     months = ("2025-12", "2026-01")
-    baseline, models = _reference(sales, months)
+    baseline, models, cats = _reference(sales, months)
     args = dict(
         months=months, listings=sales, output_dir=tmp_path,
         calibration_months=2, calibration_cap=25, bootstrap_repeats=15,
+        catboost_models=cats,
     )
     pooled, monthly, by_type, output = compare_list_aware_spline_gam(
         baseline, models, **args)
-    assert len(pooled) == 5 and len(monthly) == 10
+    assert len(pooled) == 6 and len(monthly) == 12
     assert set(pooled.variant) == {
-        "baseline", "splines", "splines_geo",
+        "baseline", "catboost_huber", "splines", "splines_geo",
         "splines_tensor_gam", "splines_geo_tensor_gam",
     }
     assert output.groupby(["month", "arm", "variant"]).size().nunique() == 1
-    assert len(output) == 5 * len(baseline)
+    assert len(output) == 6 * len(baseline)
+    assert "delta_catboost_mdape_pp" in pooled.columns
+    assert "delta_catboost_mape_pp" in pooled.columns
+    cat_row = pooled.loc[pooled.variant == "catboost_huber"].iloc[0]
+    assert cat_row.delta_catboost_mdape_pp == pytest.approx(0)
+    assert cat_row.delta_catboost_mape_pp == pytest.approx(0)
+    xgb_row = pooled.loc[pooled.variant == "baseline"].iloc[0]
+    assert xgb_row.delta_mdape_pp == pytest.approx(0)
     assert np.isfinite(output.predicted_price).all()
     assert (tmp_path / "by_month" / "2025-11" /
             "feature__splines_geo.csv").is_file()
@@ -109,7 +133,7 @@ def test_full_list_aware_experiment_and_resume(tmp_path, monkeypatch):
 def test_history_cutoffs_are_chronological(tmp_path, monkeypatch):
     sales = _sales()
     months = ("2025-12",)
-    baseline, models = _reference(sales, months)
+    baseline, models, cats = _reference(sales, months)
     origins = []
     actual = DirectListingModel.fit
 
@@ -121,7 +145,7 @@ def test_history_cutoffs_are_chronological(tmp_path, monkeypatch):
     compare_list_aware_spline_gam(
         baseline, models, months=months, listings=sales,
         output_dir=tmp_path, calibration_months=2,
-        calibration_cap=20, bootstrap_repeats=0,
+        calibration_cap=20, bootstrap_repeats=0, catboost_models=cats,
     )
     assert len(origins) == 6   # two models × Oct/Nov calibration + Dec holdout
     assert max(origins) < pd.Timestamp("2025-12-01")
@@ -130,9 +154,10 @@ def test_history_cutoffs_are_chronological(tmp_path, monkeypatch):
 def test_different_settings_cannot_reuse_predictions(tmp_path):
     sales = _sales()
     months = ("2025-12",)
-    baseline, models = _reference(sales, months)
+    baseline, models, cats = _reference(sales, months)
     args = dict(months=months, listings=sales, output_dir=tmp_path,
-                calibration_months=1, calibration_cap=25, bootstrap_repeats=0)
+                calibration_months=1, calibration_cap=25, bootstrap_repeats=0,
+                catboost_models=cats)
     compare_list_aware_spline_gam(baseline, models, **args)
     with pytest.raises(ValueError, match="different settings or models"):
         compare_list_aware_spline_gam(
