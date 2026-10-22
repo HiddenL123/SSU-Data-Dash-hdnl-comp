@@ -14,6 +14,7 @@ from sklearn.preprocessing import SplineTransformer, StandardScaler
 
 from models.market_features import MarketLevelFeatures
 from models.spatiotemporal_features import ComparableSalesFeatures
+from models.spacetime_advanced_features import ADVANCED_FEATURE_VARIANTS, AdvancedSpaceTimeAddon
 
 FEATURE_VARIANTS = (
     "baseline",
@@ -23,7 +24,7 @@ FEATURE_VARIANTS = (
     "spacetime_rbf",
     "spacetime_splines",
     "combined",
-)
+) + ADVANCED_FEATURE_VARIANTS
 
 
 def _coords(homes):
@@ -44,6 +45,7 @@ class SpaceTimeAddon:
         if variant not in FEATURE_VARIANTS:
             raise ValueError(f"Unknown spatiotemporal add-on: {variant}")
         self.variant = variant
+        self.advanced = AdvancedSpaceTimeAddon(variant) if variant in ADVANCED_FEATURE_VARIANTS else None
         self.market = None
         self.comps = {}
         self.scaler = None
@@ -53,6 +55,9 @@ class SpaceTimeAddon:
         self.column_names_ = None
 
     def fit(self, train):
+        if self.advanced is not None:
+            self.advanced.fit(train)
+            return self
         modes = self._modes()
         if "market" in modes or "time_adjusted_comp" in modes:
             self.market = MarketLevelFeatures(shrinkage=20).fit(train)
@@ -95,6 +100,8 @@ class SpaceTimeAddon:
         return () if self.variant == "baseline" else (self.variant,)
 
     def transform(self, homes, base_features):
+        if self.advanced is not None:
+            return self.advanced.transform(homes, base_features)
         if self.variant == "baseline":
             return pd.DataFrame(index=homes.index)
         if self.column_names_ is None and self.market is None and not self.comps and (
