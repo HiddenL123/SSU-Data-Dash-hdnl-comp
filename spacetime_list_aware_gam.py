@@ -4,10 +4,10 @@ Primary reference: the original saved tuned XGBoost list-aware sale/list-price
 ratio model. All new spline-feature models and their historical out-of-time
 GAM calibration models remain XGBoost with that exact target/specification.
 
-Secondary reference: the stronger separately saved list-aware CatBoost Huber
+Optional secondary reference: a separately saved list-aware CatBoost Huber
 model. It is evaluated on the same homes but NEVER used to fit GAM residuals.
-The main pooled and monthly delta_* metrics remain relative to XGBoost;
-additional delta_catboost_* columns show direct CatBoost Huber comparisons.
+The main pooled and monthly delta_* metrics remain relative to XGBoost.
+CatBoost comparisons can be attached later without refitting any XGBoost.
 
 No off-market fits or residuals are reused. All outputs are isolated and
 per-month feature/GAM results can be resumed with a fingerprinted manifest.
@@ -34,7 +34,7 @@ from spacetime_three_month import (
     _attach_type, _bootstrap_delta, _type_summary, _validate_result, summarize,
 )
 
-PIPELINE_VERSION = 2
+PIPELINE_VERSION = 3
 FEATURE_NAME = "Xpt_spatiotemporal__selected_binary"
 BASES = {
     "splines": "spacetime_splines",
@@ -163,17 +163,19 @@ def compare_list_aware_spline_gam(
     baseline_predictions, fitted_models, *, months=None,
     calibration_months=3, calibration_cap=None, residual_strength=0.5,
     bootstrap_repeats=500, seed=42,
-    output_dir="outputs/spacetime_list_aware_spline_gam_cat_reference",
+    output_dir="outputs/spacetime_list_aware_spline_gam_xgb",
     resume=True, listings=None,
-    catboost_model_name="catboost_spatiotemporal_900",
+    catboost_model_name=None,
     catboost_models=None,
 ):
-    """Test four new list-aware XGBoost arms against XGBoost and CatBoost.
+    """Test spline, geo and Tensor GAM list-aware XGBoost models.
 
-    baseline_predictions and fitted_models are the SAVED XGBoost validation
-    results. CatBoost Huber models are loaded by name if not explicitly passed.
-    Returns pooled, monthly, by_type, predictions. Every fitted GAM uses
-    XGBoost out-of-time errors from its own feature family.
+    baseline_predictions and fitted_models are the saved XGBoost validation
+    results. Set catboost_model_name to load an OPTIONAL independent Huber
+    reference; leave None to skip. Or pass catboost_models explicitly.
+    The returned summaries always compare to XGBoost. If CatBoost is available,
+    additional delta_catboost_* paired comparisons are attached.
+    Every fitted GAM uses out-of-time residuals of its own XGBoost parent.
     """
     if not 0 <= residual_strength <= 1:
         raise ValueError("residual_strength must be between 0 and 1")
@@ -203,24 +205,33 @@ def compare_list_aware_spline_gam(
            _jsonable_spec(spec) for model in reference_models[1:]):
         raise ValueError("Saved list-aware XGBoost specifications differ")
 
-    if catboost_models is None:
+    # CatBoost is a reference only. Never block the XGBoost experiments
+    # when that optional saved snapshot was not kept.
+    if catboost_models is None and catboost_model_name is not None:
         from save_model import load_model, list_saved_models
         try:
             catboost_models = load_model(catboost_model_name)
         except FileNotFoundError as exc:
             raise FileNotFoundError(
-                f"Missing saved CatBoost Huber reference {catboost_model_name!r}. "
-                f"Available saved models: {list_saved_models()}"
+                f"Requested CatBoost Huber snapshot {catboost_model_name!r} "
+                f"was not saved. Available snapshots: {list_saved_models()}. "
+                "Pass catboost_model_name=None to run XGBoost only."
             ) from exc
-    if len(catboost_models) != len(periods) or any(
-        len(pair) != 2 for pair in catboost_models
-    ):
-        raise ValueError("CatBoost model snapshot must contain one pair per month")
-    cat_models = [pair[1] for pair in catboost_models]
-    cat_spec = _check_catboost_huber(cat_models[0])
-    if any(_jsonable_spec(_check_catboost_huber(m)) !=
-           _jsonable_spec(cat_spec) for m in cat_models[1:]):
-        raise ValueError("Saved CatBoost Huber specifications differ across months")
+
+    cat_models = None
+    if catboost_models is not None:
+        if len(catboost_models) != len(periods) or any(
+            len(pair) != 2 for pair in catboost_models
+        ):
+            raise ValueError(
+                "CatBoost snapshot must contain one off-market/list-aware pair "
+                "for each validation month"
+            )
+        cat_models = [pair[1] for pair in catboost_models]
+        cat_spec = _check_catboost_huber(cat_models[0])
+        if any(_jsonable_spec(_check_catboost_huber(m)) !=
+               _jsonable_spec(cat_spec) for m in cat_models[1:]):
+            raise ValueError("Saved CatBoost Huber specs differ across months")
 
     sales = data.load("listings") if listings is None else listings.copy()
     sales["date_listed"] = pd.to_datetime(sales.date_listed)
@@ -239,26 +250,21 @@ def compare_list_aware_spline_gam(
     if any(cohorts[p].empty for p in all_months):
         raise ValueError("A validation or calibration sale month has no homes")
 
-    cat_frames = []
-    for month, cat_model in zip(periods, cat_models):
-        held = cohorts[month]
-        hidden = data.hide_answers(held, "list_aware")
-        cat_frames.append(_frame(
-            held, month, "reference", "catboost_huber",
-            np.asarray(cat_model.predict(hidden), dtype=float),
-        ))
-    cat_ref = pd.concat(cat_frames, ignore_index=True)
-    cat_pred_fingerprint = hashlib.sha256(
-        pd.util.hash_pandas_object(cat_ref, index=True)
-        .to_numpy(dtype="uint64").tobytes()
-    ).hexdigest()
+    cat_ref = None
+    if cat_models is not None:
+        cat_frames = []
+        for month, cat_model in zip(periods, cat_models):
+            held = cohorts[month]
+            hidden = data.hide_answers(held, "list_aware")
+            cat_frames.append(_frame(
+                held, month, "reference", "catboost_huber",
+                np.asarray(cat_model.predict(hidden), dtype=float),
+            ))
+        cat_ref = pd.concat(cat_frames, ignore_index=True)
 
     settings = {
         "pipeline_version": PIPELINE_VERSION,
         "track": "list_aware", "target": "ratio",
-        "catboost_model_name": catboost_model_name,
-        "catboost_spec": _jsonable_spec(cat_spec),
-        "catboost_predictions_hash": cat_pred_fingerprint,
         "months": [str(p) for p in periods],
         "bases": BASES, "corrections": CORRECTIONS,
         "calibration_months": calibration_months,
@@ -343,9 +349,11 @@ def compare_list_aware_spline_gam(
             oot_cache[key] = result
         return oot_cache[key]
 
-    expected = {("feature", "baseline"), ("reference", "catboost_huber")} | {
+    expected = {("feature", "baseline")} | {
         ("feature", family) for family in BASES
     } | {("residual", name) for name in CORRECTIONS.values()}
+    if cat_ref is not None:
+        expected.add(("reference", "catboost_huber"))
     for i, month in enumerate(periods):
         held = cohorts[month]
         hidden = data.hide_answers(held, "list_aware")
@@ -356,10 +364,12 @@ def compare_list_aware_spline_gam(
             baseline_predictions, original_frame, month, track="list_aware"
         )
         rows.append(original_frame)
-        cat_this_month = cat_ref.loc[cat_ref.month == str(month)]
-        rows.append(cat_this_month)
+        if cat_ref is not None:
+            rows.append(cat_ref.loc[cat_ref.month == str(month)])
         print(f"\n{month}: evaluating {len(held):,} list-aware homes "
-              "(XGBoost and CatBoost references)", flush=True)
+              "(XGBoost baseline" +
+              (", CatBoost Huber reference)" if cat_ref is not None else ")"),
+              flush=True)
         for family, correction_name in CORRECTIONS.items():
             base = base_prediction(family, month)
             rows.append(base)
@@ -399,15 +409,20 @@ def compare_list_aware_spline_gam(
         output, repeats=bootstrap_repeats, seed=seed)
     pooled, monthly = _parent_comparisons(
         pooled, monthly, output, bootstrap_repeats, seed)
-    pooled, monthly = _catboost_comparisons(
-        pooled, monthly, output, bootstrap_repeats, seed)
+    if cat_ref is not None:
+        pooled, monthly = _catboost_comparisons(
+            pooled, monthly, output, bootstrap_repeats, seed)
     by_type = _type_summary(_attach_type(output, sales))
     _write_frame(folder / "predictions.csv", output)
     _write_frame(folder / "pooled_summary.csv", pooled)
     _write_frame(folder / "monthly_summary.csv", monthly)
     _write_frame(folder / "house_type_summary.csv", by_type)
 
-    print("\nList-aware XGBoost experiments against both original XGBoost and CatBoost Huber:\n")
+    print("\nList-aware XGBoost spline/geo/Tensor GAM results "
+          "(delta columns vs original XGBoost):\n")
+    if cat_ref is None:
+        print("CatBoost Huber not provided; comparison can be added later "
+              "without retraining XGBoost.", flush=True)
     print(pooled[[
         "arm", "variant", "homes", "mdape", "mape",
         "delta_mdape_pp", "delta_mape_pp",
