@@ -360,18 +360,41 @@ def run_matern_confirmation(*, confirm_months=("2025-09", "2025-10", "2025-11"),
     ref = preds[preds.variant == "xgb_tensor_gam"].set_index(
         ["month", "ml_num"]
     ).sort_index()
+    p = _ape(ref.sold_price.to_numpy(dtype=float),
+             ref.predicted_price.to_numpy(dtype=float))
+    group_ids = np.asarray(ref.index.get_level_values("month"), dtype=str)
+    groups = [
+        np.flatnonzero(group_ids == str(month)) for month in periods
+    ]
+    rng = np.random.default_rng(ctx.seed)
+    # Use precisely the same stratified resampling indices for all models.
+    bootstrap_indices = [
+        np.concatenate([
+            rng.choice(group, len(group), replace=True)
+            for group in groups
+        ])
+        for _ in range(bootstrap_repeats)
+    ]
     for i, row in pooled.iterrows():
         other = preds[preds.variant == row.variant].set_index(
             ["month", "ml_num"]
         ).loc[ref.index]
-        p = _ape(ref.sold_price.to_numpy(dtype=float),
-                 ref.predicted_price.to_numpy(dtype=float))
         q = _ape(ref.sold_price.to_numpy(dtype=float),
                  other.predicted_price.to_numpy(dtype=float))
         pooled.loc[i, "delta_vs_tensor_mdape_pp"] = (
             np.median(q) - np.median(p)
         )
         pooled.loc[i, "delta_vs_tensor_mape_pp"] = np.mean(q-p)
+        if bootstrap_indices:
+            dmd = [
+                np.median(q[j]) - np.median(p[j])
+                for j in bootstrap_indices
+            ]
+            dma = [np.mean(q[j] - p[j]) for j in bootstrap_indices]
+            pooled.loc[i, "tensor_mdape_ci_low"] = np.quantile(dmd, .025)
+            pooled.loc[i, "tensor_mdape_ci_high"] = np.quantile(dmd, .975)
+            pooled.loc[i, "tensor_mape_ci_low"] = np.quantile(dma, .025)
+            pooled.loc[i, "tensor_mape_ci_high"] = np.quantile(dma, .975)
     _save(ctx.root / "confirmation_predictions.csv", preds)
     _save(ctx.root / "confirmation_pooled.csv", pooled)
     _save(ctx.root / "confirmation_monthly.csv", monthly)
