@@ -11,11 +11,11 @@ import numpy as np
 import pandas as pd
 
 from models.features import make_features
-from models.spacetime_structural_features import FEATURE_SET, coords
+from models.spacetime_structural_features import FEATURE_SET, SPLINE_GEO_SUFFIX, coords
 
 
 def gpboost_joint(train, homes, *, rounds=220, seed=42):
-    """Fit GPBoost boosting+Matérn GP jointly, using the same XGBoost features.
+    """Fit GPBoost boosting+Matérn GP jointly, using the same spline+geo XGBoost feature family.
 
     GPBoost has its own LightGBM-style tree, so this is a model-class
     challenger, not an identical XGBoost with a different covariance option.
@@ -26,7 +26,7 @@ def gpboost_joint(train, homes, *, rounds=220, seed=42):
         raise ImportError("Optional dependency: python -m pip install gpboost") from exc
 
     feature_provider = make_features(
-        FEATURE_SET, model="xgboost", track="off_market"
+        FEATURE_SET + SPLINE_GEO_SUFFIX, model="xgboost", track="off_market"
     )
     X = feature_provider.fit_transform(train).copy()
     H = feature_provider.transform(homes).copy()
