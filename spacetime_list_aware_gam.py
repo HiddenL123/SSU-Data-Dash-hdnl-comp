@@ -1,18 +1,18 @@
-"""Full-strength walk-forward spline / geographic Tensor GAM for list-aware homes.
+"""Full-strength chronological spline / geo / Tensor GAM for list-aware CatBoost.
 
-The list-aware predictor learns log(sold_price / list_price), using the listing
-price and ratio-based comparable features. All new feature models preserve this
-target and the original saved XGBoost estimator spec. GAM corrections are
-trained exclusively on prior-month out-of-time *list-aware* log-price errors.
-
-The previous off-market outputs and cache are never used or changed. Per-month
-prediction files are saved for interruption-safe resume. On all runs, the
-original list-aware XGBoost validation prediction is checked against the
-already-loaded saved model for each validation month.
+Preserve the fitted CatBoost-Huber ratio-target model, comparable-sale features,
+loss, and tuned settings as the baseline. Each new feature model uses the same
+CatBoost configuration with additional spline / geographic predictors.
+Tensor GAM corrections use ONLY prior-month, truly out-of-time list-aware
+CatBoost residuals from the corresponding model, never off-market residuals.
+The original off-market or XGBoost experiment files are not reused or changed.
+A separate fingerprinted, resumable cache stores the new experiment.
 """
 from __future__ import annotations
 
 import json
+import hashlib
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +22,7 @@ import data
 from models.direct_listing import DirectListingModel
 from models.spacetime_screen_residuals import SpaceTimeResidual
 from spacetime_full_feature_comparison import (
-    _feature_spec, _from_cache, _signature, _write_frame,
+    _feature_spec, _from_cache, _write_frame,
 )
 from spacetime_full_validation import (
     _frame, _jsonable_spec, _validate_baseline_reference,
@@ -31,8 +31,8 @@ from spacetime_three_month import (
     _attach_type, _bootstrap_delta, _type_summary, _validate_result, summarize,
 )
 
-PIPELINE_VERSION = 1
-FEATURE_NAME = "Xpt_spatiotemporal__selected_binary"
+PIPELINE_VERSION = 2
+FEATURE_NAME = "Xpt_spatiotemporal"
 BASES = {
     "splines": "spacetime_splines",
     "splines_geo": "spacetime_splines+geo_context",
@@ -45,20 +45,49 @@ COMPARE_KEYS = ["month", "ml_num"]
 
 
 def _check_list_aware_model(model):
-    """Require exact, already-trained ratio-target XGBoost architecture."""
+    """Require the original CatBoost Huber ratio model, not the XGBoost snapshot."""
     if not isinstance(model, DirectListingModel) or not model._fitted:
         raise ValueError("Expected a fitted list-aware DirectListingModel")
     if model.target != "ratio":
         raise ValueError("Saved list-aware model must predict the sale/list ratio")
     if (model.modelspecs is None or len(model.modelspecs) != 1 or
         len(model.components) != 1):
-        raise ValueError("Expected exactly one list-aware XGBoost stage")
-    if (model.modelspecs[0][1] != FEATURE_NAME or
-        model.components[0][0].feature_backend != "xgboost"):
+        raise ValueError("Expected one fitted CatBoost stage")
+    klass, name, params = model.modelspecs[0]
+    if (name != FEATURE_NAME or
+        model.components[0][0].feature_backend != "catboost"):
         raise ValueError(
-            "List-aware model must use the tuned XGBoost selected-binary features"
+            "Expected CatBoost + Xpt_spatiotemporal, not XGBoost. "
+            "Load saved_models/catboost_spatiotemporal_900."
         )
+    if (params or {}).get("loss_function") != "Huber:delta=0.05":
+        raise ValueError(
+            "Expected CatBoost Huber:delta=0.05; "
+            "do not compare to an RMSE or XGBoost baseline."
+        )
+    if not hasattr(model.components[0][0].estimator, "save_model"):
+        raise ValueError("Fitted native CatBoost model is not serializable")
     return model.modelspecs
+
+
+def _catboost_fingerprint(sales, reference, specs, models, config):
+    """Fingerprint raw rows, baseline predictions and serialized CatBoost weights."""
+    digest = hashlib.sha256()
+    for frame in (sales, reference):
+        digest.update("|".join(frame.columns).encode("utf-8"))
+        digest.update(
+            pd.util.hash_pandas_object(frame, index=True)
+            .to_numpy(dtype="uint64").tobytes()
+        )
+    with tempfile.TemporaryDirectory(prefix="list_aware_cat_fingerprint_") as temp:
+        for i, model in enumerate(models):
+            file = Path(temp) / f"baseline_{i}.cbm"
+            model.components[0][0].estimator.save_model(str(file), format="cbm")
+            digest.update(file.read_bytes())
+    digest.update(json.dumps({
+        "spec": _jsonable_spec(specs), **config
+    }, sort_keys=True).encode("utf-8"))
+    return digest.hexdigest()
 
 
 def _parent_comparisons(pooled, monthly, predictions, repeats, seed):
@@ -106,11 +135,12 @@ def compare_list_aware_spline_gam(
     output_dir="outputs/spacetime_list_aware_spline_gam",
     resume=True, listings=None,
 ):
-    """Compare list-aware baseline, splines, splines+geo, and both tensor GAMs.
+    """Compare CatBoost Huber ratio model and spline/geo/Tensor GAM add-ons.
 
-    Returns (pooled_summary, monthly_summary, by_type, matched_predictions).
-    All validation forecasts and OOT residuals use list-aware inputs, including
-    the listing price, and the historical models predict log(sold/list).
+    Pass fitted_models=load_model("catboost_spatiotemporal_900"), and
+    baseline_predictions=None to generate baseline predictions from the
+    trusted saved model (without retraining). Model pairs must be ordered
+    off_market/list_aware for the same validation months.
     """
     if not 0 <= residual_strength <= 1:
         raise ValueError("residual_strength must be between 0 and 1")
@@ -120,6 +150,8 @@ def compare_list_aware_spline_gam(
         raise ValueError("calibration_cap must be positive or None")
 
     if months is None:
+        if baseline_predictions is None:
+            raise ValueError("Provide months when baseline_predictions=None")
         months = sorted(baseline_predictions.loc[
             baseline_predictions.track == "list_aware", "month"
         ].astype(str).unique())
@@ -157,6 +189,24 @@ def compare_list_aware_spline_gam(
     if any(cohorts[p].empty for p in all_months):
         raise ValueError("A validation or calibration sale month has no homes")
 
+    # Replay the original saved CatBoost Huber model to make reference
+    # predictions; the existing notebook's 'predictions' are XGBoost and
+    # MUST NOT be passed as this benchmark's CatBoost reference.
+    if baseline_predictions is None:
+        reference_rows = []
+        for month, fitted in zip(periods, reference_models):
+            held = cohorts[month]
+            hidden = data.hide_answers(held, "list_aware")
+            reference_rows.append(pd.DataFrame({
+                "month": str(month),
+                "ml_num": held.ml_num.to_numpy(),
+                "track": "list_aware",
+                "sold_price": held.sold_price.to_numpy(dtype=float),
+                "predicted_price": np.round(
+                    np.asarray(fitted.predict(hidden), dtype=float)),
+            }))
+        baseline_predictions = pd.concat(reference_rows, ignore_index=True)
+
     settings = {
         "pipeline_version": PIPELINE_VERSION,
         "track": "list_aware", "target": "ratio",
@@ -167,7 +217,7 @@ def compare_list_aware_spline_gam(
         "residual_strength": residual_strength,
         "bootstrap_repeats": bootstrap_repeats, "seed": seed,
     }
-    fingerprint = _signature(
+    fingerprint = _catboost_fingerprint(
         sales, baseline_predictions, spec, reference_models, settings)
     manifest = {
         "fingerprint": fingerprint,
@@ -200,14 +250,14 @@ def compare_list_aware_spline_gam(
         cached = (_from_cache(path, held, month=month, arm="feature",
                               variant=family) if reuse else None)
         if cached is not None:
-            print(f"    {month} {family}: cached XGBoost", flush=True)
+            print(f"    {month} {family}: cached CatBoost", flush=True)
             base_cache[key] = cached
             return cached
         training = sales.loc[sales.date_sold < month.start_time]
         if training.empty:
             raise ValueError(f"No earlier training sales for {month}")
         params = _feature_spec(spec, BASES[family])
-        print(f"    {month} {family}: training ratio-XGBoost on "
+        print(f"    {month} {family}: training Huber ratio-CatBoost on "
               f"{len(training):,} past sales", flush=True)
         estimator = DirectListingModel(
             target="ratio", modelspecs=params
@@ -250,7 +300,7 @@ def compare_list_aware_spline_gam(
     for i, month in enumerate(periods):
         held = cohorts[month]
         hidden = data.hide_answers(held, "list_aware")
-        # Original snapshot: no retraining or recalibration for the baseline.
+        # Original CatBoost Huber snapshot: no baseline refitting.
         original = np.asarray(reference_models[i].predict(hidden), dtype=float)
         original_frame = _frame(held, month, "feature", "baseline", original)
         _validate_baseline_reference(
@@ -303,7 +353,7 @@ def compare_list_aware_spline_gam(
     _write_frame(folder / "monthly_summary.csv", monthly)
     _write_frame(folder / "house_type_summary.csv", by_type)
 
-    print("\nFull-strength list-aware spline / Tensor GAM results:\n")
+    print("\nFull-strength list-aware CatBoost Huber / Tensor GAM results:\n")
     print(pooled[[
         "arm", "variant", "homes", "mdape", "mape",
         "delta_mdape_pp", "delta_mape_pp",
