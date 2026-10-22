@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 FEATURE_SET = "Xpt_spatiotemporal__selected_binary"
+SPLINE_GEO_SUFFIX = "__st_spacetime_splines+geo_context"
 
 def coords(homes):
     lat = pd.to_numeric(homes.latitude, errors="coerce").to_numpy(dtype=float)
