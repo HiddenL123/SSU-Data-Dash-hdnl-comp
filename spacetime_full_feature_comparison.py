@@ -122,12 +122,21 @@ def compare_full_spacetime_models(
     frozen cutoff and are reused for every requested subsequent month.
     """
     features, residuals = tuple(feature_variants), tuple(residual_variants)
-    from spacetime_shotgun import SCREEN_FEATURE_VARIANTS
+    # Validate against this runner's own supported models and the directly
+    # registered feature providers.  Do not reuse spacetime_shotgun's imported
+    # registry: Jupyter can retain a stale copy of that module after git pull,
+    # rejecting e.g. geo_context even though this runner supports it.
+    from models.spacetime_screen_features import FEATURE_VARIANTS as AVAILABLE_ADDONS
     from models.spacetime_screen_residuals import RESIDUAL_VARIANTS as AVAILABLE_RESIDUALS
     if not features or features[0] != "baseline" or len(features) != len(set(features)):
         raise ValueError("feature_variants must begin with baseline and be unique")
-    if any(x not in SCREEN_FEATURE_VARIANTS for x in features):
-        raise ValueError("Unrecognized feature variant")
+    available_features = set(FEATURE_VARIANTS) | set(AVAILABLE_ADDONS) | set(COMPARABLE_SUFFIXES)
+    unknown = sorted(set(features) - available_features)
+    if unknown:
+        raise ValueError(
+            f"Unrecognized feature variants: {unknown}; "
+            f"available variants: {sorted(available_features)}"
+        )
     if len(residuals) != len(set(residuals)) or any(x not in AVAILABLE_RESIDUALS for x in residuals):
         raise ValueError("Unrecognized or repeated residual variant")
     if mode not in ("expanding", "fixed_origin"):
