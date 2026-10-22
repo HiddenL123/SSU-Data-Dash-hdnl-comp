@@ -39,7 +39,7 @@ from spacetime_full_validation import (
     _check_model, _frame, _jsonable_spec, _validate_baseline_reference,
 )
 from spacetime_three_month import (
-    _attach_type, _type_summary, _validate_result, summarize,
+    _attach_type, _type_summary, _validate_result, _bootstrap_delta, summarize,
 )
 
 PIPELINE_VERSION = 1
@@ -154,7 +154,6 @@ def compare_full_spline_gam(
             raise ValueError("Previous spline-GAM run differs; choose new output_dir")
     # Do not load orphaned partial CSVs without an exact compatible manifest.
     reuse_local = bool(resume and was_present)
-    _write_frame  # Uses atomic writes below for completed base/corrected results.
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     old_cache = _trusted_spline_cache(
@@ -292,6 +291,59 @@ def compare_full_spline_gam(
     pooled, monthly = summarize(
         predictions, repeats=bootstrap_repeats, seed=seed
     )
+
+    # GAM performance must also be compared with its *own* fitted XGBoost
+    # base, not just with the unchanged original 700-tree XGBoost reference.
+    # Pair predictions by month and property to keep the comparison exact.
+    for family, correction_name in CORRECTIONS.items():
+        keys = ["month", "ml_num"]
+        base_rows = predictions.loc[
+            (predictions.arm == "feature") & (predictions.variant == family)
+        ].set_index(keys).sort_index()
+        corrected_rows = predictions.loc[
+            (predictions.arm == "residual") &
+            (predictions.variant == correction_name)
+        ].set_index(keys).loc[base_rows.index]
+        price = base_rows.sold_price.to_numpy(dtype=float)
+        base_ape = 100 * np.abs(base_rows.predicted_price.to_numpy() - price) / price
+        corrected_ape = (100 * np.abs(
+            corrected_rows.predicted_price.to_numpy() - price) / price)
+        pairwise = _bootstrap_delta(
+            base_ape, corrected_ape, repeats=bootstrap_repeats, seed=seed
+        )
+        row = pooled.index[
+            (pooled.arm == "residual") & (pooled.variant == correction_name)
+        ]
+        pooled.loc[row, "parent_model"] = family
+        pooled.loc[row, "delta_parent_mdape_pp"] = (
+            np.median(corrected_ape) - np.median(base_ape)
+        )
+        pooled.loc[row, "delta_parent_mape_pp"] = (
+            np.mean(corrected_ape) - np.mean(base_ape)
+        )
+        pooled.loc[row, "parent_homes_improved_fraction"] = np.mean(
+            corrected_ape < base_ape
+        )
+        for metric, value in pairwise.items():
+            pooled.loc[row, metric.replace("delta_", "delta_parent_")] = value
+        for month in periods:
+            base_month = base_rows.loc[str(month)]
+            corr_month = corrected_rows.loc[str(month)]
+            true_month = base_month.sold_price.to_numpy(dtype=float)
+            a = 100 * np.abs(
+                base_month.predicted_price.to_numpy() - true_month
+            ) / true_month
+            b = 100 * np.abs(
+                corr_month.predicted_price.to_numpy() - true_month
+            ) / true_month
+            mask = ((monthly.month == str(month)) &
+                    (monthly.arm == "residual") &
+                    (monthly.variant == correction_name))
+            monthly.loc[mask, "delta_parent_mdape_pp"] = (
+                np.median(b) - np.median(a)
+            )
+            monthly.loc[mask, "delta_parent_mape_pp"] = np.mean(b) - np.mean(a)
+
     by_type = _type_summary(_attach_type(predictions, sales))
     predictions.to_csv(root / "predictions.csv", index=False)
     pooled.to_csv(root / "pooled_summary.csv", index=False)
