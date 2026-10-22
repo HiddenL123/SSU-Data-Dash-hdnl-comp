@@ -14,11 +14,14 @@ from models.features import make_features
 from models.spacetime_structural_features import FEATURE_SET, SPLINE_GEO_SUFFIX, coords
 
 
-def gpboost_joint(train, homes, *, rounds=220, seed=42):
+def gpboost_joint(train, homes, *, rounds=220, seed=42, return_components=False):
     """Fit GPBoost boosting+Matérn GP jointly, using the same spline+geo XGBoost feature family.
 
     GPBoost has its own LightGBM-style tree, so this is a model-class
     challenger, not an identical XGBoost with a different covariance option.
+
+    When return_components=True, preserve combined, tree-only, and random
+    effects on the centered log-price scale for notebook diagnostics.
     """
     try:
         import gpboost as gpb
@@ -65,8 +68,64 @@ def gpboost_joint(train, homes, *, rounds=220, seed=42):
         train_set=dataset, gp_model=gp, num_boost_round=rounds,
         verbose_eval=False,
     )
+    test_coordinates = coords(homes)
     result = model.predict(
-        data=H, gp_coords_pred=coords(homes), pred_latent=False,
+        data=H, gp_coords_pred=test_coordinates, pred_latent=False,
         predict_var=False,
     )
-    return np.exp(intercept + np.asarray(result["response_mean"], dtype=float))
+    combined_log_centered = np.asarray(
+        result["response_mean"], dtype=float
+    ).reshape(-1)
+    if (combined_log_centered.shape != (len(homes),) or
+        not np.isfinite(combined_log_centered).all()):
+        raise ValueError("GPBoost returned nonfinite/misaligned response_mean")
+    combined_price = np.exp(intercept + combined_log_centered)
+    if not return_components:
+        return combined_price
+
+    # The package documentation specifies these keys for a Gaussian
+    # likelihood. Inspect BOTH latent components; do not infer them from
+    # the final sale-price predictions after exponentiating.
+    latent = model.predict(
+        data=H, gp_coords_pred=test_coordinates, pred_latent=True,
+        predict_var=False,
+    )
+    fixed_log = np.asarray(latent["fixed_effect"], dtype=float).reshape(-1)
+    random_log = np.asarray(
+        latent["random_effect_mean"], dtype=float
+    ).reshape(-1)
+    tree_log = np.asarray(
+        model.predict(data=H, ignore_gp_model=True), dtype=float
+    ).reshape(-1)
+    for key, value in (
+        ("fixed_effect", fixed_log),
+        ("random_effect_mean", random_log),
+        ("tree_only", tree_log),
+    ):
+        if value.shape != (len(homes),) or not np.isfinite(value).all():
+            raise ValueError(f"GPBoost diagnostic {key} invalid")
+    # If this identity fails for Gaussian likelihood, the outputs are
+    # being misinterpreted or a package-level prediction option differs.
+    log_decomposition_gap = float(
+        np.max(np.abs(combined_log_centered - fixed_log - random_log))
+    ) if len(homes) else 0.0
+    return {
+        "price_combined": combined_price,
+        "price_tree_only": np.exp(intercept + tree_log),
+        "log_combined": intercept + combined_log_centered,
+        "log_fixed": intercept + fixed_log,
+        "log_random_effect": random_log,
+        "log_tree_only": intercept + tree_log,
+        "log_decomposition_gap": log_decomposition_gap,
+        "log_tree_vs_fixed_gap": float(
+            np.max(np.abs(tree_log - fixed_log))
+        ) if len(homes) else 0.0,
+        "train_target_offset": intercept,
+        "train_log_target_min": float(np.min(y)),
+        "train_log_target_median": float(np.median(y)),
+        "train_log_target_max": float(np.max(y)),
+        "training_rows": int(len(train)),
+        "feature_count": int(X.shape[1]),
+        "categorical_feature_count": int(len(categorical)),
+        "model_rounds": int(rounds),
+    }
