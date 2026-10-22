@@ -18,6 +18,65 @@ COMPARABLE_EXPERIMENTS = {
 }
 
 
+
+
+class SpaceTimeExperimentFeatures:
+    """Off-market experiment wrapper; preserves fitted base XGBoost columns.
+
+    A feature name ending with __st_spacetime_splines, or multiple add-ons
+    separated by '+', works inside the original OffMarketModel pipeline.
+    These are opt-in experiments and do not affect baseline feature names.
+    """
+
+    def __init__(self, base_provider, variants):
+        from models.spacetime_screen_features import FEATURE_VARIANTS, SpaceTimeAddon
+
+        names = tuple(variants)
+        if (not names or len(names) != len(set(names)) or
+            any(name not in FEATURE_VARIANTS or name == "baseline" for name in names)):
+            raise ValueError(f"Unknown or repeated spatiotemporal add-on: {names}")
+        self.base_provider = base_provider
+        self.variants = names
+        self.addons = [SpaceTimeAddon(name) for name in names]
+        self.columns_ = None
+
+    def _append(self, homes, base_X):
+        import pandas as pd
+
+        frames = [base_X]
+        for name, addon in zip(self.variants, self.addons):
+            extra = addon.transform(homes, base_X)
+            if not extra.index.equals(base_X.index):
+                raise ValueError(f"{name}: feature rows are misaligned")
+            if extra.columns.duplicated().any():
+                raise ValueError(f"{name}: duplicated add-on columns")
+            frames.append(extra)
+        combined = pd.concat(frames, axis=1)
+        if combined.columns.duplicated().any():
+            raise ValueError("Spatiotemporal features overlap base/add-on columns")
+        return combined
+
+    def fit_transform(self, train):
+        base_X = self.base_provider.fit_transform(train)
+        for addon in self.addons:
+            addon.fit(train)
+        combined = self._append(train, base_X)
+        self.columns_ = list(combined.columns)
+        return combined
+
+    def transform(self, homes):
+        if self.columns_ is None:
+            raise RuntimeError("Call fit_transform() before transform()")
+        base_X = self.base_provider.transform(homes)
+        combined = self._append(homes, base_X)
+        if list(combined.columns) != self.columns_:
+            raise ValueError("Changed spatiotemporal feature schema after training")
+        return combined
+
+    @property
+    def categorical_features(self):
+        return getattr(self.base_provider, "categorical_features", [])
+
 class PropertyFeatures:
     """Reuse legacy text vocabulary, geography and native categorical encodings."""
 
@@ -122,6 +181,18 @@ def make_features(
     model="catboost",
     track="off_market",
 ):
+    # Opt-in full-model spatial feature arms. Allow mixtures such as
+    # Xpt_spatiotemporal__selected_binary__comp_type_quota__st_spacetime_splines+geo_context.
+    # Resolve the ordinary/comp provider first, then append spatial columns.
+    if "__st_" in feature_name:
+        if track != "off_market":
+            raise ValueError("Spatiotemporal experiment add-ons are off_market only")
+        ordinary_name, extra_names = feature_name.rsplit("__st_", 1)
+        if not ordinary_name or not extra_names:
+            raise ValueError("Invalid spatiotemporal feature experiment identifier")
+        base = make_features(ordinary_name, model=model, track=track)
+        return SpaceTimeExperimentFeatures(base, extra_names.split("+"))
+
     # Optional independent comparable-sale ablations, available for the
     # default selected TF-IDF as well as any registered text representation.
     # E.g. Xpt_spatiotemporal__selected_binary__comp_type_quota
