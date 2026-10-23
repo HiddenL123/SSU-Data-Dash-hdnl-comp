@@ -10,7 +10,7 @@ from models.spacetime_structural_features import (
     FEATURE_SET, SPLINE_GEO_SUFFIX, coords,
 )
 from models.spacetime_structural_residuals import local_kernel, matern_gp
-from spacetime_structural_shotgun import run_structural_shotgun
+from spacetime_structural_fast import run_structural_shotgun
 from test_starter import make_listings
 
 
@@ -47,7 +47,7 @@ def test_structural_shotgun_resume_without_catboost_or_gpboost(
     tmp_path, monkeypatch
 ):
     """One run is possible without gpboost; successful candidates resume."""
-    import spacetime_structural_shotgun as shot
+    import spacetime_structural_fast as shot
     sales = make_listings(1100, seed=101)
     months = ("2025-10", "2025-11")
     calls = []
