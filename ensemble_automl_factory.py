@@ -205,7 +205,6 @@ class FactoryRun:
         return fold
 
     def _predict_fold(self, candidate, month, params, *, fold_name, cache=True):
-        fold = self._prepare_fold(candidate, month)
         # Important: an interrupted Optuna run may later find a better trial.
         # Include the FULL parameter set in the cache key, not just candidate ID.
         param_id = hashlib.sha256(
@@ -216,16 +215,22 @@ class FactoryRun:
             fold_name / param_id / f"{month}.csv"
         )
         if cache and dest.is_file():
+            # Verify against the deterministic cohort WITHOUT rebuilding
+            # the expensive training-fitted 1000-term feature matrix.
+            _, held = self._cohorts(month)
+            ids = held.ml_num.astype(str).to_numpy()
+            truth = held.sold_price.to_numpy(dtype=float)
             df = pd.read_csv(dest, dtype={"ml_num": str})
-            if (len(df) == len(fold["ids"]) and
-                np.array_equal(df.ml_num.to_numpy(), fold["ids"]) and
+            if (len(df) == len(ids) and
+                np.array_equal(df.ml_num.to_numpy(), ids) and
                 np.array_equal(
-                    df.sold_price.to_numpy(dtype=float), fold["truth"]
+                    df.sold_price.to_numpy(dtype=float), truth
                 ) and np.isfinite(df.predicted_price).all() and
                 df.predicted_price.gt(0).all()):
                 return df.predicted_price.to_numpy(dtype=float)
             raise ValueError(f"Stale/misaligned member cache: {dest}")
 
+        fold = self._prepare_fold(candidate, month)
         model = _make_estimator(params, self.cfg.trees)
         model.set_params(random_state=candidate.seed)
         model.fit(fold["X"], fold["y"])
@@ -244,12 +249,14 @@ class FactoryRun:
     def _assembled(self, candidate, months, params, *, stage):
         predictions, truth, keys = [], [], []
         for month in months:
-            fold = self._prepare_fold(candidate, month)
+            # Reading a cached prediction does not require rebuilding the
+            # feature provider; cohort sampling is deterministic.
+            _, held = self._cohorts(month)
             predictions.append(self._predict_fold(
                 candidate, month, params, fold_name=stage, cache=True
             ))
-            truth.append(fold["truth"])
-            keys.extend((str(month), ident) for ident in fold["ids"])
+            truth.append(held.sold_price.to_numpy(dtype=float))
+            keys.extend((str(month), ident) for ident in held.ml_num.astype(str))
         p, y = np.concatenate(predictions), np.concatenate(truth)
         return pd.DataFrame({
             "month": [m for m, _ in keys],
@@ -333,7 +340,11 @@ class FactoryRun:
         remaining = max(0, self.cfg.optuna_trials - len(study.trials))
         if remaining:
             study.optimize(trial_objective, n_trials=remaining, n_jobs=1)
-        if not study.best_trial:
+        complete = [
+            trial for trial in study.trials
+            if trial.state == optuna.trial.TrialState.COMPLETE
+        ]
+        if not complete:
             raise RuntimeError(f"No successful Optuna trial for {candidate.name}")
         params = {**XGB_TUNED, **study.best_params}
         return params, float(study.best_value)
@@ -528,6 +539,7 @@ class FactoryRun:
         reference = audit_streams[0][1]
         for name, frame in audit_streams[1:]:
             self._aligned(reference, frame)
+        self.fold_features.clear()
         y = reference.sold_price.to_numpy()
         pred = np.exp(sum(
             weights[name] * np.log(frame.predicted_price.to_numpy(dtype=float))
