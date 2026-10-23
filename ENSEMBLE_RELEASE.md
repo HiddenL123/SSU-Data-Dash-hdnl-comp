@@ -150,6 +150,51 @@ empty project output folder**, then restore into the local VM disk:
 A restore to a new runtime is mandatory; do NOT point SQLite directly at
 Google Drive, as mounted-Drive I/O and SQLite locks are unreliable.
 
+## Troubleshooting: restored Colab checkpoint rejected on Windows
+
+If `audit` or `benchmark` fails with
+`Factory settings/data changed: use a NEW output directory`, **do not
+delete the experiment folder**. The restored Optuna trials/roster may be
+perfectly valid, but the local program computes a different manifest.
+
+From the repo root in Windows PowerShell, run (using native Python 3.13):
+
+```powershell
+py -3.13 ensemble_rc.py diagnose
+```
+
+This **read-only** command prints every mismatched field, the local
+housing data file selected by `data.load("listings")`, row count and
+pandas version. It does not run or delete anything.
+
+- **Only `settings.*` differs:** the checkpoint was created with
+  slightly different release settings. Reuse the exact saved settings:
+  `py -3.13 ensemble_rc.py diagnose --use-checkpoint-settings`.
+  Once that reports no differences, use
+  `py -3.13 ensemble_rc.py audit --profile overnight_local --use-checkpoint-settings`
+  and then the same flag with `benchmark`. Do not copy tuning parameters
+  into a new run or replace the manifest.
+- **`data_sha256` differs:** the local loaded listings differ from Colab,
+  including possible CSV-vs-Parquet dtype/index differences, row order, or
+  pandas version. The historical cohorts must be identical to reuse
+  validation caches. Compare `data.find_file("listings")` and
+  `pd.__version__` in both environments. Use the exact Colab
+  `listings.parquet` under a separate folder referenced through
+  `DATA_DIR`, if needed, then rerun `diagnose`. Never suppress this
+  protection; aligning only the row count is insufficient.
+- **`xgb_parent.*` differs:** the baseline hyperparameters in
+  `spacetime_fast.py` differ from the checkpoint. Restore the code
+  revision that generated the checkpoint, or inspect exactly what changed
+  before replaying predictions. Do not edit the frozen manifest.
+- **`settings.output_dir` differs:** the saved experiment used a
+  different relative output-path string. To reuse it exactly, give the
+  original path when invoking the CLI; avoid modifying the checkpoint.
+
+`--use-checkpoint-settings` is explicit and does **not** bypass the data
+hash or baseline validation. The frozen checkpoint selection/audit protocol
+remains authoritative; no new candidate generation is triggered by
+`diagnose`.
+
 ## 4. Freeze, audit, refit and export
 
 Once generation search is finished, **stop all other workers** and run:
