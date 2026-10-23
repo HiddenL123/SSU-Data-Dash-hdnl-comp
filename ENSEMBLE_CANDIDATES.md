@@ -244,3 +244,56 @@ This outlines the eventual factory; the current notebook only implements
 fixed-prediction shrinkage comparisons and the initial feature-bagging
 pilot. Do not accidentally label the proposal as a running evolutionary
 search engine.
+
+## AutoML factory v1 (now implemented)
+
+`ensemble_automl_factory.py` and `models/automl_search.py` implement
+a **bounded, opt-in starter**, not the complete multi-family evolutionary
+optimizer. Execute `RUN_AUTOML_FACTORY=True` in `ensemble_starter.ipynb`.
+Install the optional dependency using `pip install optuna`.
+
+- Candidate generator: deterministic random combinations of selected 47,
+  selected+extra, weighted, uniform or full binary text; independent
+  bootstrap/subbag/all-row fitting; valid combinations of spatial splines,
+  geo context, market or no add-on.
+- Historical comparable features and training-only BoW vocabulary are
+  fitted on all eligible chronological training homes **before** fitting
+  XGBoost on bootstrap/subbag rows. Model families beyond XGBoost are
+  future work.
+- Cheap gross-error check (`screen_max_mdape=22%`), then two Optuna trials
+  per surviving candidate by default. This guard only rejects
+  catastrophically poor models; it is not a general ranking threshold.
+- Optuna tuning: Mar–Apr 2025. Ensemble selection and a fixed nonnegative
+  geometric-blend weight grid: May–Jun 2025. The member must improve
+  the weighted `0.65*MdAPE + 0.35*MAPE` objective by at least
+  0.02 percentage points without more than 0.03 points of MAPE regression.
+- Shadow audit: Jul–Aug 2025, AFTER selection, without altering weights.
+  This audit is isolated within the **factory's** run, but these historic
+  months have already been used elsewhere in the project; it is not a
+  newly untouched test.
+- Persist SQLite Optuna studies, member predictions, roster, member weights,
+  event history, cohort-scoped train settings, selected-ensemble predictions
+  and shadow-audit predictions. Optional accepted-member snapshots contain
+  one fitted feature provider and the model's terms, columns and log target
+  offset, saved in `saved_models/off_market/`.
+- Resume with the same settings and output directory without redoing
+  already-processed candidates. **Increase `generations`** to extend
+  the same fixed-budget experiment; other configuration changes require a
+  new output directory because selection comparisons would be incompatible.
+
+Initially run **1 generation × 2 candidates × 2 Optuna trials**.
+Start only one factory process per output directory; the v1 roster writer is
+not a transactional multi-worker scheduler.
+
+Remaining before a full final factory:
+
+1. Candidate-replacement/removal and adaptive pool size, beyond the current
+   additive maximum of `max_members`.
+2. Independent LightGBM/CatBoost members and integrated model-specific
+   Matérn/Tensor GAM residual correctors.
+3. Nested rolling evaluation that tracks adaptation of the selection set
+   across many generations and a fresh final holdout if one becomes available.
+4. Refit the final selected architectures on all legally available data with
+   700-tree/full-strength parameters before submission.
+5. Save a single weighted meta-ensemble of all final fitted members and
+   reconcile shared versus separate historical feature transformers.
