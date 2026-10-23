@@ -86,8 +86,7 @@ def test_factory_resume_and_audit_after_frozen_selection(tmp_path, monkeypatch):
     # Synthetic stub tests *orchestration and chronology*, not XGBoost.
     visits = []
     def fake_prepare(self, candidate, month):
-        period = pd.Period(month, freq="M")
-        homes = self.sales.loc[self.sale_months == period].iloc[:8]
+        _, homes = self._cohorts(month)
         ids = homes.ml_num.astype(str).to_numpy()
         return {
             "ids": ids, "truth": homes.sold_price.to_numpy(float),
