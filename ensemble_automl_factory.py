@@ -431,6 +431,21 @@ class FactoryRun:
                 weights, candidate.name, member["admitted_alpha"]
             )
         processed = set(roster["processed"])
+        audit_lock = self.root / "shadow_audit_lock.json"
+        if audit_lock.is_file():
+            remaining = [
+                candidate.name
+                for generation in range(self.cfg.generations)
+                for candidate in generate_candidates(
+                    generation, self.cfg.candidates_per_generation, self.cfg.seed
+                ) if candidate.name not in processed
+            ]
+            if remaining:
+                raise RuntimeError(
+                    "Shadow audit has already been opened; do not extend "
+                    "ensemble selection against its known results. "
+                    "Start an independent new output directory."
+                )
         for generation in range(self.cfg.generations):
             for candidate in generate_candidates(
                 generation, self.cfg.candidates_per_generation, self.cfg.seed
@@ -530,49 +545,133 @@ class FactoryRun:
         selection_score = metrics(
             current.sold_price.to_numpy(), current.predicted_price.to_numpy()
         )
-        # One shadow audit at the END, never used to change roster or weights.
-        audit_streams = []
+        current.to_csv(self.root / "selection_ensemble_predictions.csv", index=False)
+        outcome = {
+            "selection_metrics": selection_score,
+            "effective_member_weights": weights,
+            "members": [entry["candidate"]["name"] for entry in roster["members"]],
+            "shadow_audit_status": (
+                "locked" if audit_lock.is_file() else "unopened"
+            ),
+        }
+        summary_path = self.root / "summary.json"
+        # Do not destroy a previous audit summary during harmless resume.
+        if not audit_lock.is_file():
+            summary_path.write_text(
+                json.dumps(outcome, indent=2)+"\n", encoding="utf-8"
+            )
+        print("\nAutoML ensemble selection:", selection_score, flush=True)
+        print("Shadow audit NOT opened; explicitly enable its separate cell.",
+              flush=True)
+        return outcome, pd.DataFrame(self.events), current
+
+    def audit(self):
+        """Open a one-time shadow diagnostic AFTER roster/weights are frozen.
+
+        Audit metrics never influence candidate acceptance. Once opened, the
+        factory refuses to add new generations in this same output directory,
+        preventing retrospective audit-score optimization via iterative runs.
+        """
+        roster_path = self.root / "roster.json"
+        if not roster_path.is_file():
+            raise FileNotFoundError("First complete the AutoML selection run")
+        roster = json.loads(roster_path.read_text(encoding="utf-8"))
+        if not roster.get("members"):
+            raise ValueError("No accepted ensemble members to audit")
+        required = {
+            candidate.name
+            for generation in range(self.cfg.generations)
+            for candidate in generate_candidates(
+                generation, self.cfg.candidates_per_generation, self.cfg.seed
+            )
+        }
+        if not required.issubset(set(roster["processed"])):
+            raise RuntimeError(
+                "Factory selection has not finished all requested generations"
+            )
+        checksum = hashlib.sha256(
+            json.dumps(roster, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        lock_path = self.root / "shadow_audit_lock.json"
+        if lock_path.is_file():
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            if lock.get("roster_sha256") != checksum:
+                raise RuntimeError(
+                    "Selected model roster changed after the shadow audit"
+                )
+            summary = json.loads(
+                (self.root / "summary.json").read_text(encoding="utf-8")
+            )
+            saved = pd.read_csv(
+                self.root / "shadow_audit_predictions.csv",
+                dtype={"ml_num": str},
+            )
+            return summary, saved
+        weights = {}
+        streams = []
         for member in roster["members"]:
             candidate = Candidate(**member["candidate"])
-            audit_streams.append((
+            weights = updated_weights(
+                weights, candidate.name, member["admitted_alpha"]
+            )
+            streams.append((
                 candidate.name,
                 self._assembled(
                     candidate, self.cfg.audit_months,
                     member["parameters"], stage="audit"
                 ),
             ))
-        reference = audit_streams[0][1]
-        for name, frame in audit_streams[1:]:
-            self._aligned(reference, frame)
-        self.fold_features.clear()
-        y = reference.sold_price.to_numpy()
-        pred = np.exp(sum(
+            self.fold_features.clear()
+        reference = streams[0][1]
+        for _, other in streams[1:]:
+            self._aligned(reference, other)
+        true = reference.sold_price.to_numpy(dtype=float)
+        values = np.exp(sum(
             weights[name] * np.log(frame.predicted_price.to_numpy(dtype=float))
-            for name, frame in audit_streams
+            for name, frame in streams
         ))
-        audit_score = metrics(y, pred)
-        audit_reference = metrics(y, reference.predicted_price.to_numpy(dtype=float))
-        audit_pred = reference[["month", "ml_num", "sold_price"]].copy()
-        audit_pred["predicted_price"] = pred
-        audit_pred.to_csv(self.root / "shadow_audit_predictions.csv", index=False)
-        current.to_csv(self.root / "selection_ensemble_predictions.csv", index=False)
-        outcome = {
-            "selection_metrics": selection_score,
+        audit_score = metrics(true, values)
+        audit_reference = metrics(
+            true, reference.predicted_price.to_numpy(dtype=float)
+        )
+        results = reference[["month", "ml_num", "sold_price"]].copy()
+        results["predicted_price"] = values
+        selection = json.loads(
+            (self.root / "summary.json").read_text(encoding="utf-8")
+        )
+        selection.update({
+            "shadow_audit_status": "locked",
             "shadow_audit_metrics": audit_score,
             "audit_first_reference_metrics": audit_reference,
-            "effective_member_weights": weights,
-            "members": [entry["candidate"]["name"] for entry in roster["members"]],
-            "warning": "Audit reused only for reporting within this factory. "
-                       "2025 development history may already be consulted externally.",
-        }
-        (self.root / "summary.json").write_text(
-            json.dumps(outcome, indent=2)+"\n", encoding="utf-8"
+            "warning": (
+                "Shadow audit consulted ONCE after factory selection. "
+                "Historically these months may have been examined elsewhere."
+            ),
+        })
+        # Write fully scored outputs and audit lock only after successful fits.
+        results.to_csv(
+            self.root / "shadow_audit_predictions.csv", index=False
         )
-        print("\nAutoML ensemble selection:", selection_score, flush=True)
-        print("Shadow audit (not used for model choices):", audit_score, flush=True)
-        return outcome, pd.DataFrame(self.events), audit_pred
-
+        (self.root / "summary.json").write_text(
+            json.dumps(selection, indent=2)+"\n", encoding="utf-8"
+        )
+        lock_path.write_text(
+            json.dumps({
+                "roster_sha256": checksum,
+                "members": selection["members"],
+                "audit_months": list(self.cfg.audit_months),
+            }, indent=2)+"\n",
+            encoding="utf-8",
+        )
+        print("Frozen shadow audit:", audit_score, flush=True)
+        return selection, results
 
 def run_automl_factory(*, listings=None, **kwargs):
     """Notebook entry point. Named kwargs are FactorySettings constructor args."""
     return FactoryRun(FactorySettings(**kwargs), listings=listings).run()
+
+
+
+def run_automl_shadow_audit(*, listings=None, **kwargs):
+    """Opt-in one-time audit of a previously frozen factory selection."""
+    return FactoryRun(FactorySettings(**kwargs), listings=listings).audit()
