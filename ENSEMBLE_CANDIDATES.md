@@ -267,19 +267,22 @@ Install the optional dependency using `pip install optuna`.
   geometric-blend weight grid: May–Jun 2025. The member must improve
   the weighted `0.65*MdAPE + 0.35*MAPE` objective by at least
   0.02 percentage points without more than 0.03 points of MAPE regression.
-- Shadow audit: Jul–Aug 2025, AFTER selection, without altering weights.
-  This audit is isolated within the **factory's** run, but these historic
-  months have already been used elsewhere in the project; it is not a
-  newly untouched test.
+- **Separate one-time shadow audit:** Jul–Aug 2025, opened only by the
+  explicit `RUN_AUTOML_SHADOW_AUDIT=True` notebook cell after the model
+  roster and weights are frozen. It locks the roster against adding further
+  generations in that directory. These historic months were consulted in
+  other experiments; this is not a new untouched test.
 - Persist SQLite Optuna studies, member predictions, roster, member weights,
   event history, cohort-scoped train settings, selected-ensemble predictions
   and shadow-audit predictions. Optional accepted-member snapshots contain
   one fitted feature provider and the model's terms, columns and log target
   offset, saved in `saved_models/off_market/`.
 - Resume with the same settings and output directory without redoing
-  already-processed candidates. **Increase `generations`** to extend
-  the same fixed-budget experiment; other configuration changes require a
-  new output directory because selection comparisons would be incompatible.
+  already-processed candidates. **Increase `generations` before opening
+  the shadow audit** to extend the same fixed-budget experiment; other
+  configuration changes require a new output directory because selection
+  comparisons would be incompatible. After audit, the roster is locked
+  against further selection in that directory.
 
 Initially run **1 generation × 2 candidates × 2 Optuna trials**.
 Start only one factory process per output directory; the v1 roster writer is
