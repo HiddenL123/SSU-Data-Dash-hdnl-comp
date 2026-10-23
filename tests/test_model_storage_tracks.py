@@ -147,3 +147,104 @@ def test_shared_fitted_ensemble_snapshot_round_trip(tmp_path):
         recovered.predict(frame, weights={"small": -1})
     with pytest.raises(KeyError):
         recovered.predict_member(frame, "nonexistent")
+
+
+class SmallTextBase:
+    """Picklable lightweight replacement for production historical features."""
+    def fit_transform(self, homes, **kwargs):
+        return self.transform(homes)
+
+    def transform(self, homes, **kwargs):
+        return homes[["latitude", "longitude"]].copy()
+
+
+class SmallXGB:
+    """Picklable, deterministic estimator used in storage integration tests."""
+    def set_params(self, **kwargs):
+        return self
+
+    def fit(self, matrix, y):
+        self.center = float(np.mean(y))
+        return self
+
+    def predict(self, matrix):
+        return np.full(len(matrix), self.center)
+
+
+def test_feature_bagging_pilot_saves_reloadable_offmarket_models(
+    tmp_path, monkeypatch,
+):
+    import data
+    import ensemble_feature_bagging_pilot as pilot
+    from models.ensemble_bagging import BagSpec
+    from models.text_features import TextAugmentedFeatures
+    from test_starter import make_listings
+
+    listings = make_listings(650, seed=41)
+    listings["remarks"] = np.resize([
+        "sunny balcony newly renovated transit",
+        "family detached backyard quiet garden",
+        "spacious condo modern windows parking",
+    ], len(listings))
+
+    monkeypatch.setattr(
+        pilot, "make_features",
+        lambda *args, **kwargs: TextAugmentedFeatures(
+            SmallTextBase(), representation="binary",
+            vocabulary_mode="full",
+        ),
+    )
+    calls = []
+    def new_estimator(*args):
+        calls.append(1)
+        return SmallXGB()
+    monkeypatch.setattr(pilot, "_make_estimator", new_estimator)
+
+    specs = (
+        BagSpec("reference", "selected", seed=42),
+        BagSpec("bootstrap", "selected_plus", n_text=5,
+                row_mode="bootstrap", seed=43),
+    )
+    args = dict(
+        validation_month="2025-06", train_start="2025-01-01",
+        train_cap=80, validation_cap=12,
+        trees=5, specs=specs, listings=listings,
+        max_extra_terms=20, min_df=1,
+        output_dir=tmp_path / "outputs",
+        model_save_dir=tmp_path / "snapshots",
+        save_fitted_models=True, resume=True,
+    )
+    scores, preds, _ = pilot.run_feature_bagging_pilot(**args)
+    assert len(calls) == len(specs)
+    names = list_saved_models(
+        track="off_market", save_dir=tmp_path / "snapshots"
+    )
+    assert len(names) == 1
+    assert not list_saved_models(
+        track="list_aware", save_dir=tmp_path / "snapshots"
+    )
+    saved = load_model(
+        names[0], track="off_market", save_dir=tmp_path / "snapshots"
+    )
+    assert set(saved.members) == {"reference", "bootstrap"}
+    held = listings.loc[
+        listings.date_sold.dt.to_period("M") == pd.Period("2025-06")
+    ]
+    from spacetime_fast import _cap
+    held = _cap(held, 12, 53)
+    hidden = data.hide_answers(held, "off_market")
+    for spec in specs:
+        expected = preds.loc[
+            preds.member == spec.name, "predicted_price"
+        ].to_numpy()
+        np.testing.assert_allclose(
+            saved.predict_member(hidden, spec.name), expected
+        )
+    before = len(calls)
+    scores2, _, _ = pilot.run_feature_bagging_pilot(**args)
+    assert len(calls) == before
+    np.testing.assert_allclose(scores.mdape, scores2.mdape)
+    assert model_info(
+        names[0], track="off_market",
+        save_dir=tmp_path / "snapshots",
+    )["metadata"]["track"] == "off_market"
