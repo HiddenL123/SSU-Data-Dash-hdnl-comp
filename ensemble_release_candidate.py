@@ -167,7 +167,8 @@ def finalize_release(
             if info is not None:
                 saved = info["metadata"]
                 if (saved.get("frozen_roster_sha256") != provenance or
-                    saved.get("candidate") != candidate.record() or
+                    json.dumps(saved.get("candidate"), sort_keys=True) !=
+                    json.dumps(candidate.record(), sort_keys=True) or
                     saved.get("parameters") != params):
                     raise ValueError(
                         f"Existing saved model {artifact_name} belongs to another run"
