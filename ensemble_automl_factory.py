@@ -722,14 +722,30 @@ class FactoryRun:
                 raise RuntimeError(
                     "Selected model roster changed after the shadow audit"
                 )
-            summary = json.loads(
-                (self.root / "summary.json").read_text(encoding="utf-8")
-            )
-            saved = pd.read_csv(
-                self.root / "shadow_audit_predictions.csv",
-                dtype={"ml_num": str},
-            )
-            return summary, saved
+            if lock.get("status", "complete") == "complete":
+                summary = json.loads(
+                    (self.root / "summary.json").read_text(encoding="utf-8")
+                )
+                saved = pd.read_csv(
+                    self.root / "shadow_audit_predictions.csv",
+                    dtype={"ml_num": str},
+                )
+                return summary, saved
+            if lock.get("status") != "pending":
+                raise ValueError("Unknown audit checkpoint status")
+            print("Resuming interrupted shadow audit...", flush=True)
+        else:
+            # Audit lock MUST be written before any audit calculation or
+            # output. Otherwise a crash after revealing audit scores but
+            # before locking would allow continued selection on that result.
+            write_json(lock_path, {
+                "roster_sha256": checksum,
+                "members": [
+                    m["candidate"]["name"] for m in roster["members"]
+                ],
+                "audit_months": list(self.cfg.audit_months),
+                "status": "pending",
+            })
         weights = {}
         streams = []
         for member in roster["members"]:
@@ -778,21 +794,17 @@ class FactoryRun:
                 "Historically these months may have been examined elsewhere."
             ),
         })
-        # Write fully scored outputs and audit lock only after successful fits.
-        results.to_csv(
-            self.root / "shadow_audit_predictions.csv", index=False
-        )
-        (self.root / "summary.json").write_text(
-            json.dumps(selection, indent=2)+"\n", encoding="utf-8"
-        )
-        lock_path.write_text(
-            json.dumps({
-                "roster_sha256": checksum,
-                "members": selection["members"],
-                "audit_months": list(self.cfg.audit_months),
-            }, indent=2)+"\n",
-            encoding="utf-8",
-        )
+        # Pending audit lock is already durable. Independently atomic
+        # artifacts can be regenerated from cached predictions after a
+        # crash; final status is committed LAST.
+        write_csv(self.root / "shadow_audit_predictions.csv", results)
+        write_json(self.root / "summary.json", selection)
+        write_json(lock_path, {
+            "roster_sha256": checksum,
+            "members": selection["members"],
+            "audit_months": list(self.cfg.audit_months),
+            "status": "complete",
+        })
         print("Frozen shadow audit:", audit_score, flush=True)
         return selection, results
 
