@@ -1,0 +1,532 @@
+"""Resumable, chronological, diversity-aware XGBoost ensemble AutoML (v1).
+
+Run from ensemble_starter.ipynb (opt-in). Requires optional 'optuna'.
+No model ever fits on the candidate's validation labels. Separate folds:
+  tune: earlier months for Optuna hyperparameters
+  select: later months for constrained ensemble admission and weights
+  audit: still-later report ONLY, after membership and weights are frozen
+
+Even the audit months may have been inspected in previous research. Audit is
+shielded from THIS algorithm's selection loop; it is NOT guaranteed untouched.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import hashlib
+import json
+from pathlib import Path
+from time import perf_counter
+
+import numpy as np
+import pandas as pd
+
+import data
+from models.automl_search import (
+    Candidate, choose_admission, generate_candidates, log_blend,
+    metrics, objective, updated_weights,
+)
+from models.ensemble_bagging import (
+    BagSpec, build_text_bank, sample_training_rows, select_text_terms,
+)
+from models.ensemble_snapshot import BaggedMember, FeatureBaggingEnsemble
+from models.features import make_features
+from models.text_features import TextAugmentedFeatures
+from save_model import model_info, save_model
+from spacetime_fast import XGB_TUNED, _cap, _make_estimator
+
+VERSION = 1
+
+
+@dataclass(frozen=True)
+class FactorySettings:
+    tuning_months: tuple[str, ...] = ("2025-03", "2025-04")
+    selection_months: tuple[str, ...] = ("2025-05", "2025-06")
+    audit_months: tuple[str, ...] = ("2025-07", "2025-08")
+    train_start: str = "2022-01-01"
+    train_cap: int = 5000
+    validation_cap: int = 250
+    trees: int = 220
+    max_extra_terms: int = 1000
+    min_df: int = 10
+    candidates_per_generation: int = 2
+    generations: int = 1
+    optuna_trials: int = 2
+    minimum_ensemble_gain_pp: float = 0.02
+    max_mape_regression_pp: float = 0.03
+    max_members: int = 8
+    seed: int = 42
+    output_dir: str = "outputs/ensemble_automl_factory_v1"
+    save_accepted_snapshots: bool = False
+
+    def __post_init__(self):
+        months = [
+            tuple(pd.Period(m, freq="M") for m in block)
+            for block in (self.tuning_months, self.selection_months, self.audit_months)
+        ]
+        if any(not block or len(set(block)) != len(block) or
+               list(block) != sorted(block) for block in months):
+            raise ValueError("Each fold group must contain distinct sorted months")
+        if not months[0][-1] < months[1][0] or not months[1][-1] < months[2][0]:
+            raise ValueError("Must satisfy tuning months < selection months < audit months")
+        if months[2][-1] >= pd.Period("2025-12", freq="M"):
+            raise ValueError("AutoML development and audit months must precede Dec 2025")
+        if pd.Timestamp(self.train_start) >= months[0][0].start_time:
+            raise ValueError("Training start is not before earliest tuning month")
+        if min(
+            self.train_cap, self.validation_cap, self.trees,
+            self.max_extra_terms, self.min_df, self.candidates_per_generation,
+            self.generations, self.optuna_trials, self.max_members,
+        ) < 1:
+            raise ValueError("All budgets and sampling limits must be positive")
+        if (self.minimum_ensemble_gain_pp < 0 or
+            self.max_mape_regression_pp < 0):
+            raise ValueError("Admission constraints must be nonnegative")
+
+    def record(self):
+        return asdict(self)
+
+
+def _text_provider(provider):
+    if isinstance(provider, TextAugmentedFeatures):
+        return provider
+    for attr in ("base_provider", "provider"):
+        item = getattr(provider, attr, None)
+        if item is not None:
+            result = _text_provider(item)
+            if result is not None:
+                return result
+    return None
+
+
+def _feature_name(candidate):
+    suffix = "__st_" + "+".join(candidate.addons) if candidate.addons else ""
+    return "Xpt_spatiotemporal__full_binary" + suffix
+
+
+class FactoryRun:
+    def __init__(self, settings=FactorySettings(), *, listings=None):
+        self.cfg = settings
+        self.root = Path(settings.output_dir)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.sales = data.load("listings") if listings is None else listings.copy()
+        self.sales["date_listed"] = pd.to_datetime(self.sales.date_listed)
+        self.sales["date_sold"] = pd.to_datetime(self.sales.date_sold)
+        self.sale_months = self.sales.date_sold.dt.to_period("M")
+        if self.sales.ml_num.astype(str).duplicated().any():
+            raise ValueError("Monthly inputs require unique MLS identifiers")
+        # Guard ALL existing predictions/studies against data/setting drift.
+        fingerprint = hashlib.sha256(
+            pd.util.hash_pandas_object(self.sales, index=True)
+            .to_numpy(dtype="uint64").tobytes()
+        ).hexdigest()
+        setup = {"version": VERSION, "settings": self.cfg.record(),
+                 "data_sha256": fingerprint, "xgb_parent": XGB_TUNED}
+        path = self.root / "manifest.json"
+        if path.is_file() and json.loads(path.read_text(encoding="utf-8")) != setup:
+            raise ValueError("Factory settings/data changed: use a NEW output directory")
+        path.write_text(json.dumps(setup, indent=2)+"\n", encoding="utf-8")
+        self.fold_features = {}
+        self.truth_cache = {}
+        self.events = []
+
+    def _cohorts(self, month):
+        period = pd.Period(month, freq="M")
+        training = self.sales.loc[
+            (self.sales.date_sold >= pd.Timestamp(self.cfg.train_start)) &
+            (self.sales.date_sold < period.start_time)
+        ]
+        train = _cap(training, self.cfg.train_cap, self.cfg.seed)
+        held = _cap(
+            self.sales.loc[self.sale_months == period],
+            self.cfg.validation_cap, self.cfg.seed + 11,
+        )
+        if train.empty or held.empty:
+            raise ValueError(f"Empty chronological train/holdout in {period}")
+        return train, held
+
+    def _prepare_fold(self, candidate, month):
+        key = (candidate.name, str(month))
+        if key in self.fold_features:
+            return self.fold_features[key]
+        train, held = self._cohorts(month)
+        bank = build_text_bank(
+            train, max_extra_terms=self.cfg.max_extra_terms,
+            min_df=self.cfg.min_df,
+        )
+        bag = BagSpec(
+            name=candidate.name, seed=candidate.seed,
+            text_mode=candidate.text_mode, n_text=candidate.n_text,
+            selected_weight=candidate.selected_weight,
+            row_mode=candidate.row_mode,
+            row_fraction=candidate.row_fraction,
+        )
+        terms = select_text_terms(bank, bag)
+        provider = make_features(
+            _feature_name(candidate), model="xgboost", track="off_market"
+        )
+        text = _text_provider(provider)
+        if text is None:
+            raise RuntimeError("Expected training-fitted binary BoW provider")
+        text.terms = tuple(bank)
+        X = provider.fit_transform(train)
+        hidden = data.hide_answers(held, "off_market")
+        H = provider.transform(hidden)
+        if not X.columns.equals(H.columns):
+            raise ValueError("Training/holdout features not aligned")
+        term_columns = text.text_feature_names
+        inverse = {term: col for col, term in term_columns.items()}
+        columns = [
+            *(col for col in X.columns if col not in term_columns),
+            *(inverse[term] for term in terms),
+        ]
+        row_ids = sample_training_rows(len(train), bag)
+        target = np.log(train.sold_price.to_numpy(dtype=float))
+        offset = float(np.median(target))
+        fold = {
+            "month": str(month),
+            "X": X.iloc[row_ids][columns],
+            "y": target[row_ids] - offset,
+            "H": H[columns],
+            "offset": offset,
+            "held": held,
+            "truth": held.sold_price.to_numpy(dtype=float),
+            "ids": held.ml_num.astype(str).to_numpy(),
+            "provider": provider,
+            "cols": tuple(columns),
+            "terms": tuple(terms),
+            "rows": len(row_ids),
+            "unique_rows": len(np.unique(row_ids)),
+            "total_history": len(train),
+        }
+        self.fold_features[key] = fold
+        return fold
+
+    def _predict_fold(self, candidate, month, params, *, fold_name, cache=True):
+        fold = self._prepare_fold(candidate, month)
+        dest = self.root / "members" / candidate.name / fold_name / f"{month}.csv"
+        if cache and dest.is_file():
+            df = pd.read_csv(dest, dtype={"ml_num": str})
+            if (len(df) == len(fold["ids"]) and
+                np.array_equal(df.ml_num.to_numpy(), fold["ids"]) and
+                np.array_equal(
+                    df.sold_price.to_numpy(dtype=float), fold["truth"]
+                ) and np.isfinite(df.predicted_price).all() and
+                df.predicted_price.gt(0).all()):
+                return df.predicted_price.to_numpy(dtype=float)
+            raise ValueError(f"Stale/misaligned member cache: {dest}")
+
+        model = _make_estimator(params, self.cfg.trees)
+        model.set_params(random_state=candidate.seed)
+        model.fit(fold["X"], fold["y"])
+        predicted = np.exp(
+            fold["offset"] + np.asarray(model.predict(fold["H"]), dtype=float)
+        )
+        metrics(fold["truth"], predicted)  # validate positive finite
+        if cache:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame({
+                "ml_num": fold["ids"], "sold_price": fold["truth"],
+                "predicted_price": predicted,
+            }).to_csv(dest, index=False)
+        return predicted
+
+    def _assembled(self, candidate, months, params, *, stage):
+        predictions, truth, keys = [], [], []
+        for month in months:
+            fold = self._prepare_fold(candidate, month)
+            predictions.append(self._predict_fold(
+                candidate, month, params, fold_name=stage, cache=True
+            ))
+            truth.append(fold["truth"])
+            keys.extend((str(month), ident) for ident in fold["ids"])
+        p, y = np.concatenate(predictions), np.concatenate(truth)
+        return pd.DataFrame({
+            "month": [m for m, _ in keys],
+            "ml_num": [name for _, name in keys],
+            "sold_price": y, "predicted_price": p,
+        }).sort_values(["month", "ml_num"]).reset_index(drop=True)
+
+    @staticmethod
+    def _aligned(current, candidate):
+        if current is None:
+            return candidate
+        if not current[["month", "ml_num"]].equals(
+            candidate[["month", "ml_num"]]
+        ) or not np.array_equal(
+            current.sold_price.to_numpy(), candidate.sold_price.to_numpy()
+        ):
+            raise ValueError("Ensemble candidates use different homes/actual prices")
+        return candidate
+
+    def _tune(self, candidate):
+        try:
+            import optuna
+        except ImportError as exc:
+            raise ImportError(
+                "Install optuna (pip install optuna) to run the AutoML factory"
+            ) from exc
+        folder = self.root / "optuna"
+        folder.mkdir(exist_ok=True)
+        storage = f"sqlite:///{(folder / 'studies.db').resolve().as_posix()}"
+        study = optuna.create_study(
+            study_name=f"factory_v{VERSION}_{candidate.name}",
+            storage=storage, direction="minimize", load_if_exists=True,
+            sampler=optuna.samplers.TPESampler(seed=self.cfg.seed + candidate.seed),
+            pruner=optuna.pruners.MedianPruner(n_startup_trials=3),
+        )
+        if not study.trials:
+            study.enqueue_trial({
+                "max_depth": XGB_TUNED["max_depth"],
+                "min_child_weight": XGB_TUNED["min_child_weight"],
+                "learning_rate": XGB_TUNED["learning_rate"],
+                "reg_lambda": XGB_TUNED["reg_lambda"],
+                "subsample": XGB_TUNED["subsample"],
+                "colsample_bytree": XGB_TUNED["colsample_bytree"],
+            })
+        def trial_objective(trial):
+            params = {
+                "max_depth": trial.suggest_int("max_depth", 4, 10),
+                "min_child_weight": trial.suggest_float(
+                    "min_child_weight", 1.0, 35.0
+                ),
+                "learning_rate": trial.suggest_float(
+                    "learning_rate", .03, .16, log=True
+                ),
+                "reg_lambda": trial.suggest_float(
+                    "reg_lambda", 1.0, 50.0, log=True
+                ),
+                "subsample": trial.suggest_float("subsample", .75, 1.0),
+                "colsample_bytree": trial.suggest_float(
+                    "colsample_bytree", .70, 1.0
+                ),
+            }
+            scores = []
+            for month in self.cfg.tuning_months:
+                # Every trial gets identical chronological folds; the fitted
+                # feature context is reused but XGBoost is always fresh.
+                fold = self._prepare_fold(candidate, month)
+                model = _make_estimator(
+                    {**XGB_TUNED, **params}, self.cfg.trees
+                )
+                model.set_params(random_state=candidate.seed)
+                model.fit(fold["X"], fold["y"])
+                prices = np.exp(
+                    fold["offset"] + np.asarray(model.predict(fold["H"]), float)
+                )
+                scores.append(objective(fold["truth"], prices))
+                trial.report(float(np.mean(scores)), step=len(scores))
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
+            return float(np.mean(scores))
+
+        remaining = max(0, self.cfg.optuna_trials - len(study.trials))
+        if remaining:
+            study.optimize(trial_objective, n_trials=remaining, n_jobs=1)
+        if not study.best_trial:
+            raise RuntimeError(f"No successful Optuna trial for {candidate.name}")
+        params = {**XGB_TUNED, **study.best_params}
+        return params, float(study.best_value)
+
+    def _save_member(self, candidate, params):
+        """Save refitted individual model at fixed selection cutoff; never audit."""
+        name = f"factory_v{VERSION}_{candidate.name}"
+        try:
+            existing = model_info(name, track="off_market")
+        except FileNotFoundError:
+            existing = None
+        if existing is not None:
+            meta = existing.get("metadata", {})
+            if meta.get("candidate") != candidate.record() or meta.get("parameters") != params:
+                raise ValueError("Saved model name already belongs to different configuration")
+            return
+        cutoff = self.cfg.audit_months[0]
+        fold = self._prepare_fold(candidate, cutoff)
+        # IMPORTANT: fold training history strictly precedes audit first month.
+        model = _make_estimator(params, self.cfg.trees)
+        model.set_params(random_state=candidate.seed)
+        model.fit(fold["X"], fold["y"])
+        bundle = FeatureBaggingEnsemble(
+            fold["provider"],
+            {candidate.name: BaggedMember(
+                name=candidate.name, estimator=model,
+                selected_columns=fold["cols"],
+                target_offset=fold["offset"],
+                terms=fold["terms"], settings=candidate.record()
+            )}
+        )
+        save_model(bundle, name, track="off_market", metadata={
+            "candidate": candidate.record(), "parameters": params,
+            "target": "log(sold_price)", "frozen_as_of": str(cutoff),
+            "source_factory_dir": str(self.root), "model_type": "AutoMLCandidate",
+            "warning": "Development-period model; not full 700-tree production fit",
+        })
+        print(f"  Saved fitted member: saved_models/off_market/{name}", flush=True)
+
+    def _event(self, event):
+        self.events.append(event)
+        (self.root / "events.json").write_text(
+            json.dumps(self.events, indent=2, default=str)+"\n",
+            encoding="utf-8",
+        )
+
+    def run(self):
+        """Run bounded generations and report final fixed-weight shadow audit."""
+        roster_path = self.root / "roster.json"
+        if roster_path.exists():
+            roster = json.loads(roster_path.read_text(encoding="utf-8"))
+            # Reconstruct current model selection by deterministic replays of
+            # saved configs and cached selection predictions, never new draws.
+            if roster.get("version") != VERSION:
+                raise ValueError("Old roster version")
+        else:
+            roster = {"version": VERSION, "members": [], "processed": []}
+        configs, weights, current = {}, {}, None
+        # Replay previously admitted members using their frozen parameters,
+        # without refitting Optuna. Reuse cached member predictions.
+        for member in roster["members"]:
+            candidate = Candidate(**member["candidate"])
+            configs[candidate.name] = member
+            pred = self._assembled(
+                candidate, self.cfg.selection_months, member["parameters"],
+                stage="selection",
+            )
+            if current is not None:
+                self._aligned(current, pred)
+                pred = pred.copy()
+                pred["predicted_price"] = log_blend(
+                    current.predicted_price, pred.predicted_price,
+                    member["admitted_alpha"],
+                )
+            current = pred
+            weights = updated_weights(
+                weights, candidate.name, member["admitted_alpha"]
+            )
+        processed = set(roster["processed"])
+        for generation in range(self.cfg.generations):
+            for candidate in generate_candidates(
+                generation, self.cfg.candidates_per_generation, self.cfg.seed
+            ):
+                if candidate.name in processed:
+                    continue
+                print(f"\n[{generation+1}/{self.cfg.generations}] "
+                      f"Trying {candidate.name}: {candidate.record()}", flush=True)
+                t0 = perf_counter()
+                # Stage A: cheap untuned screen on FIRST earlier tuning fold.
+                baseline_params = dict(XGB_TUNED)
+                fold = self._prepare_fold(candidate, self.cfg.tuning_months[0])
+                from_time = self._predict_fold(
+                    candidate, self.cfg.tuning_months[0], baseline_params,
+                    fold_name="screen",
+                )
+                screen = metrics(fold["truth"], from_time)
+                # Stage B: strict earlier-fold Optuna tuning. This v1 performs
+                # it for all generated candidates; future pruning can use an
+                # independently fixed screen threshold/budget.
+                params, tuned_score = self._tune(candidate)
+                prediction = self._assembled(
+                    candidate, self.cfg.selection_months, params,
+                    stage="selection",
+                )
+                self._aligned(current, prediction)
+                current_prediction = (
+                    current.predicted_price.to_numpy() if current is not None else None
+                )
+                decision = choose_admission(
+                    prediction.sold_price.to_numpy(),
+                    prediction.predicted_price.to_numpy(),
+                    current_prediction,
+                    min_gain=self.cfg.minimum_ensemble_gain_pp,
+                    max_mape_regression=self.cfg.max_mape_regression_pp,
+                )
+                accept = bool(decision["accept"] and len(weights) < self.cfg.max_members)
+                record = {
+                    "generation": generation, "candidate": candidate.record(),
+                    "params": params, "tuning_score": tuned_score,
+                    "screen": screen,
+                    "admitted": accept,
+                    "weight": decision["weight"] if accept else 0.,
+                    "marginal_gain": decision["gain"],
+                    "solo": decision["solo"],
+                    "updated_metrics": decision["updated"] if accept else
+                        (metrics(current.sold_price, current.predicted_price)
+                         if current is not None else {}),
+                    "elapsed_seconds": perf_counter() - t0,
+                }
+                if accept:
+                    alpha = decision["weight"]
+                    if current is None:
+                        current = prediction.copy()
+                    else:
+                        current = current.copy()
+                        current["predicted_price"] = log_blend(
+                            current.predicted_price, prediction.predicted_price, alpha
+                        )
+                    weights = updated_weights(weights, candidate.name, alpha)
+                    roster["members"].append({
+                        "candidate": candidate.record(), "parameters": params,
+                        "admitted_alpha": alpha,
+                    })
+                    if self.cfg.save_accepted_snapshots:
+                        self._save_member(candidate, params)
+                roster["processed"].append(candidate.name)
+                # Commit progress per candidate; already-completed models can
+                # be resumed with the same config, never silently overwritten.
+                roster_path.write_text(
+                    json.dumps(roster, indent=2, default=str)+"\n",
+                    encoding="utf-8",
+                )
+                self._event(record)
+                self.fold_features.clear()  # avoid accumulating 1k-BoW matrices
+                print(f"  {'ADMIT' if accept else 'reject'} "
+                      f"gain={decision['gain']} ensemble size={len(weights)}",
+                      flush=True)
+        if not roster["members"]:
+            raise RuntimeError("No accepted model; reference candidate missing")
+        selection_score = metrics(
+            current.sold_price.to_numpy(), current.predicted_price.to_numpy()
+        )
+        # One shadow audit at the END, never used to change roster or weights.
+        audit_streams = []
+        for member in roster["members"]:
+            candidate = Candidate(**member["candidate"])
+            audit_streams.append((
+                candidate.name,
+                self._assembled(
+                    candidate, self.cfg.audit_months,
+                    member["parameters"], stage="audit"
+                ),
+            ))
+        reference = audit_streams[0][1]
+        for name, frame in audit_streams[1:]:
+            self._aligned(reference, frame)
+        y = reference.sold_price.to_numpy()
+        pred = np.exp(sum(
+            weights[name] * np.log(frame.predicted_price.to_numpy(dtype=float))
+            for name, frame in audit_streams
+        ))
+        audit_score = metrics(y, pred)
+        audit_reference = metrics(y, reference.predicted_price.to_numpy(dtype=float))
+        audit_pred = reference[["month", "ml_num", "sold_price"]].copy()
+        audit_pred["predicted_price"] = pred
+        audit_pred.to_csv(self.root / "shadow_audit_predictions.csv", index=False)
+        current.to_csv(self.root / "selection_ensemble_predictions.csv", index=False)
+        outcome = {
+            "selection_metrics": selection_score,
+            "shadow_audit_metrics": audit_score,
+            "audit_first_reference_metrics": audit_reference,
+            "effective_member_weights": weights,
+            "members": [entry["candidate"]["name"] for entry in roster["members"]],
+            "warning": "Audit reused only for reporting within this factory. "
+                       "2025 development history may already be consulted externally.",
+        }
+        (self.root / "summary.json").write_text(
+            json.dumps(outcome, indent=2)+"\n", encoding="utf-8"
+        )
+        print("\nAutoML ensemble selection:", selection_score, flush=True)
+        print("Shadow audit (not used for model choices):", audit_score, flush=True)
+        return outcome, pd.DataFrame(self.events), audit_pred
+
+
+def run_automl_factory(*, listings=None, **kwargs):
+    """Notebook entry point. Named kwargs are FactorySettings constructor args."""
+    return FactoryRun(FactorySettings(**kwargs), listings=listings).run()
