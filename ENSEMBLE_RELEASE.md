@@ -160,8 +160,23 @@ python ensemble_rc.py audit --profile overnight_local
 
 The one-time audit seals the roster, so don't open it while intending to
 increase generations. Inspect `summary.json`, monthly audit metrics and
-member weights. If the frozen ensemble passes the predeclared MdAPE/MAPE/P90
-non-regression gate against its first reference, then:
+member weights.
+
+For a **same-period comparison** with our earlier six-month benchmark, run
+an optional **frozen-weight** evaluation of December 2025–May 2026. It
+does not change model membership or weights, but these periods have already
+been examined and therefore remain development evidence rather than a
+fresh hidden holdout:
+
+```powershell
+python ensemble_rc.py benchmark --profile overnight_local
+```
+
+This writes `benchmark_full_6month_summary.json` and a cached matching
+prediction table under the release experiment directory. Evaluate the
+full-history audit and historical benchmark before finalizing. If the
+frozen ensemble passes the predeclared MdAPE/MAPE/P90 non-regression gate
+against its first reference, then:
 
 ```powershell
 python ensemble_rc.py finalize --profile overnight_local
