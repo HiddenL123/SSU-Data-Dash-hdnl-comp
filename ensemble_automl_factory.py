@@ -121,8 +121,13 @@ class FactoryRun:
             pd.util.hash_pandas_object(self.sales, index=True)
             .to_numpy(dtype="uint64").tobytes()
         ).hexdigest()
-        setup = {"version": VERSION, "settings": self.cfg.record(),
+        settings_record = self.cfg.record()
+        # Generations may be increased to continue the same frozen experiment.
+        # ALL other tuning/selection/audit/data settings must remain identical.
+        settings_record.pop("generations")
+        setup = {"version": VERSION, "settings": settings_record,
                  "data_sha256": fingerprint, "xgb_parent": XGB_TUNED}
+        setup = json.loads(json.dumps(setup, sort_keys=True))
         path = self.root / "manifest.json"
         if path.is_file() and json.loads(path.read_text(encoding="utf-8")) != setup:
             raise ValueError("Factory settings/data changed: use a NEW output directory")
