@@ -144,3 +144,30 @@ def test_orphan_optuna_trial_is_retried(tmp_path, monkeypatch):
     count = len(trials)
     run._tune(candidate)
     assert len(optuna.load_study(study_name=study_name, storage=storage).trials) == count
+
+
+def test_interrupted_accepted_snapshot_recovered_from_roster(tmp_path, monkeypatch):
+    cfg, sales, calls = fake_factory(tmp_path, monkeypatch)
+    cfg = replace(cfg, save_accepted_snapshots=True)
+    monkeypatch.setattr(factory, "model_info", lambda *a, **k: None)
+    first = [True]
+    saved = []
+
+    def interrupted_save(self, candidate, params):
+        if first[0]:
+            first[0] = False
+            raise KeyboardInterrupt("snapshot fit stopped")
+        saved.append(candidate.name)
+
+    monkeypatch.setattr(FactoryRun, "_save_member", interrupted_save)
+    with pytest.raises(KeyboardInterrupt, match="snapshot fit stopped"):
+        FactoryRun(cfg, listings=sales).run()
+
+    roster = json.loads(
+        (tmp_path / "factory" / "roster.json").read_text()
+    )
+    assert len(roster["members"]) == len(roster["processed"]) == 1
+
+    FactoryRun(cfg, listings=sales).run()
+    assert roster["members"][0]["candidate"]["name"] in saved
+    assert len(calls) == 2  # first Optuna tuning was already committed
