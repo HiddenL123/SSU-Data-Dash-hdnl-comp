@@ -241,3 +241,83 @@ def predict_release(
         "predicted_price": np.round(prices).astype(np.int64),
     }).to_csv(out, index=False)
     return out
+
+
+def benchmark_release(
+    settings: FactorySettings, *, threads=4,
+    months=("2025-12", "2026-01", "2026-02",
+            "2026-03", "2026-04", "2026-05"),
+    listings=None, checkpoint_archive=None,
+):
+    """Frozen-weight full-size six-month historical comparison (NOT untouched).
+
+    Every month is trained on all prior labelled sales, using 700 trees.
+    No Optuna/ensemble admission is performed on these historical outcomes.
+    Per-candidate forecasts are cached and resumable by the base factory.
+    """
+    from models.automl_search import metrics
+    factory = FactoryRun(
+        settings, listings=listings, runtime_threads=threads,
+        checkpoint_archive=checkpoint_archive,
+    )
+    with exclusive_factory_lock(factory.root):
+        lock_path = factory.root / "shadow_audit_lock.json"
+        if not lock_path.is_file():
+            raise RuntimeError("First freeze the ensemble and finish its shadow audit")
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        if lock.get("status") != "complete":
+            raise RuntimeError("Shadow audit still pending")
+        roster = json.loads((factory.root / "roster.json").read_text(encoding="utf-8"))
+        digest = hashlib.sha256(json.dumps(roster, sort_keys=True).encode()).hexdigest()
+        if lock.get("roster_sha256") != digest:
+            raise ValueError("Roster differs from frozen audited ensemble")
+        month_periods = [pd.Period(m, freq="M") for m in months]
+        if (not month_periods or month_periods != sorted(set(month_periods)) or
+            month_periods[0] <= pd.Period(settings.audit_months[-1], freq="M")):
+            raise ValueError("Benchmark months must be distinct, ordered and after audit")
+        streams = []
+        weights = {}
+        for entry in roster["members"]:
+            candidate = Candidate(**entry["candidate"])
+            weights = updated_weights(weights, candidate.name, entry["admitted_alpha"])
+            frame = factory._assembled(
+                candidate, tuple(str(m) for m in month_periods),
+                entry["parameters"], stage="frozen_benchmark",
+            )
+            if streams:
+                factory._aligned(streams[0][1], frame)
+            streams.append((candidate.name, frame))
+            factory.fold_features.clear()
+        reference = streams[0][1]
+        predictions = reference[["month", "ml_num", "sold_price"]].copy()
+        predictions["predicted_price"] = np.exp(sum(
+            weights[name] * np.log(frame.predicted_price.to_numpy(dtype=float))
+            for name, frame in streams
+        ))
+        y = predictions.sold_price.to_numpy(dtype=float)
+        overall = metrics(y, predictions.predicted_price.to_numpy(dtype=float))
+        first_reference = metrics(
+            y, reference.predicted_price.to_numpy(dtype=float)
+        )
+        monthly = {
+            month: metrics(
+                predictions.loc[predictions.month == month, "sold_price"].to_numpy(float),
+                predictions.loc[predictions.month == month, "predicted_price"].to_numpy(float),
+            ) for month in tuple(str(m) for m in month_periods)
+        }
+        report = {
+            "months": list(monthly),
+            "ensemble": overall, "first_reference": first_reference,
+            "monthly": monthly, "weights": weights,
+            "trees": settings.trees, "train_cap": settings.train_cap,
+            "validation_cap": settings.validation_cap,
+            "historical_evaluation_only": True,
+            "warning": ("Dec 2025-May 2026 outcomes were investigated previously. "
+                        "This is NOT an untouched hidden-test estimate."),
+        }
+        from models.automl_checkpoint import write_csv
+        write_csv(factory.root / "benchmark_full_6month_predictions.csv", predictions)
+        write_json(factory.root / "benchmark_full_6month_summary.json", report)
+        factory._backup()
+        print("Full six-month frozen benchmark:", overall, flush=True)
+        return report, predictions
