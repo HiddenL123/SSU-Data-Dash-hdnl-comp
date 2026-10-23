@@ -120,6 +120,12 @@ def main(argv=None):
             generations=args.generations if args.generations is not None else 2,
         )
         settings = settings_obj.record()
+        if Path(settings["output_dir"]).as_posix() != root.as_posix():
+            parser.error(
+                "The saved checkpoint's output_dir differs from --output-dir. "
+                "Use the original experiment path or diagnose the manifest; "
+                "checkpoint settings/data cannot be silently rewritten."
+            )
         print("Using frozen Colab checkpoint settings; data hash still verified.")
     else:
         settings = release_settings(
