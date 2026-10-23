@@ -24,6 +24,7 @@ import data
 from models.automl_checkpoint import (
     exclusive_factory_lock, write_json, write_csv,
 )
+from models.automl_portable import export_checkpoint
 from models.automl_search import (
     Candidate, choose_admission, generate_candidates, log_blend,
     metrics, objective, updated_weights,
@@ -109,10 +110,23 @@ def _feature_name(candidate):
 
 
 class FactoryRun:
-    def __init__(self, settings=FactorySettings(), *, listings=None):
+    def __init__(self, settings=FactorySettings(), *, listings=None,
+                 runtime_threads=None, checkpoint_archive=None):
         self.cfg = settings
+        self.runtime_threads = int(runtime_threads) if runtime_threads is not None else 4
+        if self.runtime_threads < 1:
+            raise ValueError("runtime_threads must be a positive integer")
+        self.checkpoint_archive = (
+            Path(checkpoint_archive).expanduser().resolve()
+            if checkpoint_archive is not None else None
+        )
         self.root = Path(settings.output_dir)
         self.root.mkdir(parents=True, exist_ok=True)
+        if self.checkpoint_archive is not None and (
+            self.checkpoint_archive == self.root.resolve() or
+            self.root.resolve() in self.checkpoint_archive.parents
+        ):
+            raise ValueError("Checkpoint archive must be OUTSIDE the experiment directory")
         self.sales = data.load("listings") if listings is None else listings.copy()
         self.sales["date_listed"] = pd.to_datetime(self.sales.date_listed)
         self.sales["date_sold"] = pd.to_datetime(self.sales.date_sold)
@@ -140,6 +154,18 @@ class FactoryRun:
         self.truth_cache = {}
         events_file = self.root / "events.json"
         self.events = json.loads(events_file.read_text(encoding="utf-8")) if events_file.is_file() else []
+
+    def _new_estimator(self, params, seed):
+        model = _make_estimator(params, self.cfg.trees)
+        model.set_params(n_jobs=self.runtime_threads, random_state=seed)
+        return model
+
+    def _backup(self):
+        # Called only from methods holding exclusive_factory_lock(root).
+        if self.checkpoint_archive is not None:
+            export_checkpoint(
+                self.root, self.checkpoint_archive, already_locked=True
+            )
 
     def _cohorts(self, month):
         period = pd.Period(month, freq="M")
@@ -274,8 +300,7 @@ class FactoryRun:
             raise ValueError(f"Stale/misaligned member cache: {dest}")
 
         fold = self._prepare_fold(candidate, month)
-        model = _make_estimator(params, self.cfg.trees)
-        model.set_params(random_state=candidate.seed)
+        model = self._new_estimator(params, candidate.seed)
         model.fit(fold["X"], fold["y"])
         predicted = np.exp(
             fold["offset"] + np.asarray(model.predict(fold["H"]), dtype=float)
@@ -287,6 +312,7 @@ class FactoryRun:
                 "ml_num": fold["ids"], "sold_price": fold["truth"],
                 "predicted_price": predicted,
             }))
+            self._backup()
         return predicted
 
     def _assembled(self, candidate, months, params, *, stage):
@@ -382,10 +408,9 @@ class FactoryRun:
                     # Historical features are fitted on this fold's eligible
                     # training sales only, never on current/future outcomes.
                     fold = self._prepare_fold(candidate, month)
-                    model = _make_estimator(
-                        {**XGB_TUNED, **params}, self.cfg.trees
+                    model = self._new_estimator(
+                        {**XGB_TUNED, **params}, candidate.seed
                     )
-                    model.set_params(random_state=candidate.seed)
                     model.fit(fold["X"], fold["y"])
                     prices = np.exp(
                         fold["offset"] + np.asarray(model.predict(fold["H"]), float)
@@ -397,6 +422,7 @@ class FactoryRun:
                         "parameters": params,
                         "objective": score,
                     })
+                    self._backup()
                 scores.append(score)
                 trial.report(float(np.mean(scores)), step=len(scores))
                 if trial.should_prune():
@@ -430,7 +456,10 @@ class FactoryRun:
         )
         remaining = max(0, self.cfg.optuna_trials - finished)
         if remaining:
-            study.optimize(trial_objective, n_trials=remaining, n_jobs=1)
+            study.optimize(
+                trial_objective, n_trials=remaining, n_jobs=1,
+                callbacks=[lambda study, trial: self._backup()],
+            )
         complete = [
             trial for trial in study.trials
             if trial.state == optuna.trial.TrialState.COMPLETE
@@ -457,8 +486,7 @@ class FactoryRun:
         cutoff = self.cfg.audit_months[0]
         fold = self._prepare_fold(candidate, cutoff)
         # IMPORTANT: fold training history strictly precedes audit first month.
-        model = _make_estimator(params, self.cfg.trees)
-        model.set_params(random_state=candidate.seed)
+        model = self._new_estimator(params, candidate.seed)
         model.fit(fold["X"], fold["y"])
         bundle = FeatureBaggingEnsemble(
             fold["provider"],
@@ -500,6 +528,7 @@ class FactoryRun:
         write_json(self.root / "roster.json", roster)
         self.events = list(roster["history"])
         write_json(self.root / "events.json", self.events)
+        self._backup()
 
     def run(self):
         with exclusive_factory_lock(self.root):
@@ -730,6 +759,7 @@ class FactoryRun:
             processed_count=len(roster["processed"]),
             accepted_members=len(roster["members"]),
         )
+        self._backup()
         print("\nAutoML ensemble selection:", selection_score, flush=True)
         print(
             "Shadow audit is LOCKED." if audit_lock.is_file() else
@@ -864,15 +894,28 @@ class FactoryRun:
             "status": "complete",
         })
         self._progress("audit_complete", accepted_members=len(roster["members"]))
+        self._backup()
         print("Frozen shadow audit:", audit_score, flush=True)
         return selection, results
 
 def run_automl_factory(*, listings=None, **kwargs):
     """Notebook entry point. Named kwargs are FactorySettings constructor args."""
-    return FactoryRun(FactorySettings(**kwargs), listings=listings).run()
+    runtime_threads = kwargs.pop("runtime_threads", None)
+    checkpoint_archive = kwargs.pop("checkpoint_archive", None)
+    return FactoryRun(
+        FactorySettings(**kwargs), listings=listings,
+        runtime_threads=runtime_threads,
+        checkpoint_archive=checkpoint_archive,
+    ).run()
 
 
 
 def run_automl_shadow_audit(*, listings=None, **kwargs):
     """Opt-in one-time audit of a previously frozen factory selection."""
-    return FactoryRun(FactorySettings(**kwargs), listings=listings).audit()
+    runtime_threads = kwargs.pop("runtime_threads", None)
+    checkpoint_archive = kwargs.pop("checkpoint_archive", None)
+    return FactoryRun(
+        FactorySettings(**kwargs), listings=listings,
+        runtime_threads=runtime_threads,
+        checkpoint_archive=checkpoint_archive,
+    ).audit()
