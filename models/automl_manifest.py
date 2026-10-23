@@ -88,7 +88,7 @@ def diagnose(root, *, generations=2, use_saved_settings=False):
         cfg = saved_factory_settings(root, generations=generations)
     else:
         cfg = FactorySettings(
-            **release_settings(output_dir=str(root), generations=generations)
+            **release_settings(output_dir=root.as_posix(), generations=generations)
         )
     sales_path = data.find_file("listings")
     sales = data.load("listings")
