@@ -131,3 +131,116 @@ Load with `load_model(name, track="off_market")`, call
 offers an equal-weight geometric blend by default; it is **not** a frozen,
 validated production ensemble. The list-aware pool will be built separately
 with its own target and historical validation.
+
+## Shrinkage versus complementarity experiment (implemented)
+
+Run the **shrinkage-versus-blending** cell in `ensemble_starter.ipynb`
+after the Matérn confirmation CSV exists. This experiment fits **no new
+models**, selects **no weights**, and compares exactly matched September–
+November 2025 homes from `confirmation_predictions.csv`.
+
+- Reference: same XGBoost splines+geography baseline, Tensor GAM, tuned
+  spatial Matérn and tuned space-time Matérn.
+- Controls: `gam_half_strength`, `spatial_half_strength`,
+  `spacetime_half_strength` (halve the **effective** log correction).
+- Blends: `gam_spatial_50_50`, `gam_spacetime_50_50`; and for each
+  `gam_{kind}_blend_half_strength`, a further halving of the averaged
+  correction.
+- Evaluate paired MdAPE/MAPE delta against **both singly-shrunk controls**,
+  the original GAM and Matérn, and the no-correction XGBoost. Include
+  month-stratified paired bootstrap intervals, homes improved, monthly scores,
+  and log-correction correlation.
+
+Outputs: `outputs/ensemble_shrinkage_vs_spatial_blending/`: `setup.json`,
+`pooled.csv`, `monthly.csv`, `pairwise.csv`,
+`correlations.csv` and `predictions.csv`.
+
+**Interpretation:** if a 50/50 GAM–Matérn blend beats only the unshrunk
+models, not the individually-shrunk controls, its gain may largely be
+regularization. If it consistently beats both shrunk controls on *separate*
+chronological data, that is stronger evidence of complementary signals.
+The earlier Sep–Nov folds have already been inspected; this diagnostic by
+itself is not independent confirmation.
+
+## Proposed iterative ensemble factory (design, not yet implemented)
+
+The long-term factory can use a bounded iterative/evolutionary AutoML search
+with candidate configurations like:
+
+```yaml
+track: off_market  # list_aware is an independent search
+base_family: xgboost
+text:
+  representation: binary
+  vocabulary_source: training_fold_only
+  bag_strategy: selected_plus | selected_weighted | random_uniform | full
+  selected_47_prior: 4.0
+  term_count: 150
+  feature_seed: 142
+rows:
+  sampling: bootstrap | subbag | full
+  sample_fraction: 1.0
+  bootstrap_seed: 258
+spacetime_addons:
+  - spacetime_splines
+  - geo_context
+model:
+  tuning_engine: optuna
+  hyperparameters: ... # only valid for the chosen model family
+validation:
+  fold_mode: chronological
+  train_history: expanding
+  track_specific: true
+```
+
+**Factory cycle:**
+1. Sample feature-text representation, bag seed, row-bootstrap settings,
+   eligible spatial features, model family and hyperparameter search space.
+   Respect incompatible feature combinations and keep genuinely prospective
+   comparable-sale context unchanged by row bootstrapping.
+2. Quickly screen the model on earlier chronological folds and a fixed,
+   identical property cohort; discard clearly broken or dominated models.
+   Spend Optuna trials only on survivors, with search/pruning budgets.
+3. Save fitted models + transformers, reproducible member configuration,
+   historical cutoff, feature terms, row seed, and aligned out-of-time
+   predictions (no future sales for feature fitting or calibration).
+4. Score **marginal ensemble gain**, not only individual MdAPE. Optimize
+   nonnegative log-price blend weights or a constrained forward-selection
+   step using *separate* chronological selection folds.
+5. If a new candidate is redundant, consider removing/replacing correlated
+   old members and re-evaluating the **whole** ensemble. Admit it only
+   for a stable, thresholded incremental gain across several folds.
+6. Retain an elite set and a smaller exploration set, then sample a new
+   generation. Bound model count, training work, disk size and Optuna
+   budget; stop when independent improvement saturates.
+
+**Critical safeguards:**
+
+- With thousands of adaptive trials, overfitting a handful of validation
+  months is the principal danger. Separate hyperparameter tuning,
+  ensemble selection, and eventual untouched evaluation. The already
+  repeatedly consulted Dec 2025–May 2026 months cannot be considered fresh
+  holdout evidence.
+- Keep identical chronological OOF home IDs for every candidate. Resampling
+  training rows may duplicate sales **inside the estimator fit**, but
+  comparable-sale context and vocabulary must be fitted on appropriate
+  chronological *historical* records, not bootstrap-generated duplicates.
+- Random feature masks can remove all useful predictors or violate spatial
+  feature requirements; allow an always-on structured core and enforce
+  valid dependencies. Use training-only vocabulary construction.
+- A single top-N cutoff on standalone MdAPE tends to select correlated
+  members. A weaker but complementary model may improve the **blend**
+  more. Diversity (including residual correlation) is a screening
+  diagnostic, not the objective itself.
+- Treat MdAPE and MAPE as separate safeguards. MdAPE is not smooth and
+  selecting on it repeatedly can harm extreme prices; use constrained
+  objectives and report paired uncertainty.
+- The model factory must ultimately **refit selected members** on the full
+  eligible history for hidden-test predictions; save the fitted feature
+  providers, not only model parameters. Off-market and list-aware have
+  different feature availability/targets, so their ensemble pools never mix.
+
+This outlines the eventual factory; the current notebook only implements
+fixed-prediction shrinkage comparisons and the initial feature-bagging
+pilot. Do not accidentally label the proposal as a running evolutionary
+search engine.
