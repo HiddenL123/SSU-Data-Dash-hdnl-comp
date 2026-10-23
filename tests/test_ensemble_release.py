@@ -101,7 +101,7 @@ def test_weighted_ensemble_independent_providers_and_rounding():
     )
     assert list(ensemble.predict_members(homes)) == ["a", "b"]
     np.testing.assert_allclose(ensemble.predict(homes), [200., 200.])
-    with pytest.raises(ValueError, match="weight"):
+    with pytest.raises(ValueError, match="[Ww]eights"):
         WeightedOffMarketEnsemble(
             {"a": StaticMember(100.)}, {"a": -1.}
         )
