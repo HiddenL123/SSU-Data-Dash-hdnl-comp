@@ -30,7 +30,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command", choices=("run", "audit", "finalize", "predict",
-                            "status", "export", "restore", "benchmark"),
+                            "status", "export", "restore", "benchmark", "diagnose"),
     )
     parser.add_argument(
         "--profile", choices=tuple(WORKER_PROFILES),
@@ -49,6 +49,11 @@ def main(argv=None):
         help="Increase before shadow audit; other experiment parameters are frozen",
     )
     parser.add_argument(
+        "--use-checkpoint-settings", action="store_true",
+        help="Explicitly reuse frozen settings from restored manifest; "
+             "does NOT bypass input-data fingerprint checks",
+    )
+    parser.add_argument(
         "--model-name", default="off_market_release_candidate_full",
     )
     parser.add_argument(
@@ -61,6 +66,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     profile = get_profile(args.profile)
     root = Path(args.output_dir)
+    if args.command == "diagnose":
+        from models.automl_manifest import diagnose
+        result = diagnose(
+            root,
+            generations=args.generations if args.generations is not None else 2,
+            use_saved_settings=args.use_checkpoint_settings,
+        )
+        return 0 if not result["differences"] else 1
     if args.command == "status":
         print("Experiment:", root.resolve())
         for filename in (
@@ -100,9 +113,24 @@ def main(argv=None):
               ))
         return 0
 
-    settings = release_settings(
-        output_dir=args.output_dir, generations=args.generations
-    )
+    if args.use_checkpoint_settings:
+        from models.automl_manifest import saved_factory_settings
+        settings_obj = saved_factory_settings(
+            root,
+            generations=args.generations if args.generations is not None else 2,
+        )
+        settings = settings_obj.record()
+        if Path(settings["output_dir"]).as_posix() != root.as_posix():
+            parser.error(
+                "The saved checkpoint's output_dir differs from --output-dir. "
+                "Use the original experiment path or diagnose the manifest; "
+                "checkpoint settings/data cannot be silently rewritten."
+            )
+        print("Using frozen Colab checkpoint settings; data hash still verified.")
+    else:
+        settings = release_settings(
+            output_dir=args.output_dir, generations=args.generations
+        )
     print(
         f"Profile={profile.name} | CPU threads={profile.xgb_threads} | "
         f"trees={settings['trees']} | full_history=True | "

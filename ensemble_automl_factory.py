@@ -133,21 +133,25 @@ class FactoryRun:
         self.sale_months = self.sales.date_sold.dt.to_period("M")
         if self.sales.ml_num.astype(str).duplicated().any():
             raise ValueError("Monthly inputs require unique MLS identifiers")
-        # Guard ALL existing predictions/studies against data/setting drift.
-        fingerprint = hashlib.sha256(
-            pd.util.hash_pandas_object(self.sales, index=True)
-            .to_numpy(dtype="uint64").tobytes()
-        ).hexdigest()
-        settings_record = self.cfg.record()
-        # Generations may be increased to continue the same frozen experiment.
-        # ALL other tuning/selection/audit/data settings must remain identical.
-        settings_record.pop("generations")
-        setup = {"version": VERSION, "settings": settings_record,
-                 "data_sha256": fingerprint, "xgb_parent": XGB_TUNED}
-        setup = json.loads(json.dumps(setup, sort_keys=True))
+        # Do NOT overwrite or bypass an incompatible Colab checkpoint.
+        # The original v1 hash algorithm is intentionally preserved.
+        from models.automl_manifest import compute_manifest, compare_manifests
+        setup = compute_manifest(self.cfg, self.sales, XGB_TUNED, version=VERSION)
         path = self.root / "manifest.json"
-        if path.is_file() and json.loads(path.read_text(encoding="utf-8")) != setup:
-            raise ValueError("Factory settings/data changed: use a NEW output directory")
+        if path.is_file():
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            differences = compare_manifests(saved, setup)
+            if differences:
+                fields = ", ".join(differences)
+                raise ValueError(
+                    f"AutoML checkpoint mismatch: {fields}. "
+                    "Your saved Colab experiment has NOT been changed. "
+                    "Run 'py -3.13 ensemble_rc.py diagnose' to see the "
+                    "saved vs. local values; use --use-checkpoint-settings "
+                    "for configuration drift, or restore the original "
+                    "listings data for a data_sha256 mismatch. "
+                    "Never edit manifest.json to force a match."
+                )
         if not path.is_file():
             write_json(path, setup)
         self.fold_features = {}
