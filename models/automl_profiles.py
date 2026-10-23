@@ -51,7 +51,7 @@ RELEASE_SETTINGS = {
     "tuning_months": ("2025-04", "2025-05"),
     "selection_months": ("2025-06", "2025-07"),
     "audit_months": ("2025-08", "2025-09", "2025-10"),
-    "train_start": "2022-01-01",
+    "train_start": "1900-01-01",
     "train_cap": 1_000_000,
     "validation_cap": 1_000_000,
     "trees": 700,
