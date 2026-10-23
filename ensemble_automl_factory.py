@@ -449,10 +449,20 @@ class FactoryRun:
         })
         print(f"  Saved fitted member: saved_models/off_market/{name}", flush=True)
 
-    def _event(self, event):
-        # events.json is a derived convenience view. The authoritative,
-        # atomically committed decision history lives INSIDE roster.json.
-        self.events.append(event)
+    def _commit_candidate(self, roster, event):
+        """One atomic transaction for a candidate's decision and event.
+
+        roster.json is authoritative. If interrupted before its os.replace,
+        candidate is retried; if interrupted afterward, the decision is
+        replayed and events.json is repaired on restart.
+        """
+        name = event["candidate"]["name"]
+        if name in roster["processed"]:
+            raise ValueError(f"Candidate already committed: {name}")
+        roster["processed"].append(name)
+        roster["history"].append(event)
+        write_json(self.root / "roster.json", roster)
+        self.events = list(roster["history"])
         write_json(self.root / "events.json", self.events)
 
     def run(self):
@@ -541,12 +551,7 @@ class FactoryRun:
                 if candidate.name in processed:
                     continue
                 if len(weights) >= self.cfg.max_members:
-                    roster["processed"].append(candidate.name)
-                    roster_path.write_text(
-                        json.dumps(roster, indent=2, default=str)+"\n",
-                        encoding="utf-8",
-                    )
-                    self._event({
+                    self._commit_candidate(roster, {
                         "generation": generation, "candidate": candidate.record(),
                         "admitted": False, "reason": "ensemble_member_cap_reached",
                     })
@@ -568,12 +573,7 @@ class FactoryRun:
                 # This is a predefined absolute cutoff, NOT adaptively fitted
                 # to an outer validation or audit result.
                 if screen["mdape"] > self.cfg.screen_max_mdape:
-                    roster["processed"].append(candidate.name)
-                    roster_path.write_text(
-                        json.dumps(roster, indent=2, default=str)+"\n",
-                        encoding="utf-8",
-                    )
-                    self._event({
+                    self._commit_candidate(roster, {
                         "generation": generation,
                         "candidate": candidate.record(),
                         "screen": screen, "admitted": False,
@@ -641,16 +641,12 @@ class FactoryRun:
                         "candidate": candidate.record(), "parameters": params,
                         "admitted_alpha": alpha,
                     })
-                    if self.cfg.save_accepted_snapshots:
-                        self._save_member(candidate, params)
-                roster["processed"].append(candidate.name)
-                # Commit progress per candidate; already-completed models can
-                # be resumed with the same config, never silently overwritten.
-                roster_path.write_text(
-                    json.dumps(roster, indent=2, default=str)+"\n",
-                    encoding="utf-8",
-                )
-                self._event(record)
+                # Atomic roster commit BEFORE potentially slow model snapshot
+                # serialization. On restart, a missing snapshot is recovered
+                # from this already-committed member/configuration.
+                self._commit_candidate(roster, record)
+                if accept and self.cfg.save_accepted_snapshots:
+                    self._save_member(candidate, params)
                 self.fold_features.clear()  # avoid accumulating 1k-BoW matrices
                 print(f"  {'ADMIT' if accept else 'reject'} "
                       f"gain={decision['gain']} ensemble size={len(weights)}",
@@ -660,7 +656,7 @@ class FactoryRun:
         selection_score = metrics(
             current.sold_price.to_numpy(), current.predicted_price.to_numpy()
         )
-        current.to_csv(self.root / "selection_ensemble_predictions.csv", index=False)
+        write_csv(self.root / "selection_ensemble_predictions.csv", current)
         selection_monthly = {
             month: metrics(
                 current.loc[current.month == month, "sold_price"].to_numpy(),
@@ -679,9 +675,7 @@ class FactoryRun:
         summary_path = self.root / "summary.json"
         # Do not destroy a previous audit summary during harmless resume.
         if not audit_lock.is_file():
-            summary_path.write_text(
-                json.dumps(outcome, indent=2)+"\n", encoding="utf-8"
-            )
+            write_json(summary_path, outcome)
         print("\nAutoML ensemble selection:", selection_score, flush=True)
         print(
             "Shadow audit is LOCKED." if audit_lock.is_file() else
