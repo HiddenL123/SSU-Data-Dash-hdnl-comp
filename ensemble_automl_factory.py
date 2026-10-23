@@ -452,6 +452,17 @@ class FactoryRun:
             ):
                 if candidate.name in processed:
                     continue
+                if len(weights) >= self.cfg.max_members:
+                    roster["processed"].append(candidate.name)
+                    roster_path.write_text(
+                        json.dumps(roster, indent=2, default=str)+"\n",
+                        encoding="utf-8",
+                    )
+                    self._event({
+                        "generation": generation, "candidate": candidate.record(),
+                        "admitted": False, "reason": "ensemble_member_cap_reached",
+                    })
+                    continue
                 print(f"\n[{generation+1}/{self.cfg.generations}] "
                       f"Trying {candidate.name}: {candidate.record()}", flush=True)
                 t0 = perf_counter()
