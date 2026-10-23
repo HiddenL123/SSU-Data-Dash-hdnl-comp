@@ -57,6 +57,7 @@ class FactorySettings:
     seed: int = 42
     output_dir: str = "outputs/ensemble_automl_factory_v1"
     save_accepted_snapshots: bool = False
+    screen_max_mdape: float = 22.0  # crude catastrophic-model prefilter only
 
     def __post_init__(self):
         months = [
@@ -79,7 +80,8 @@ class FactorySettings:
         ) < 1:
             raise ValueError("All budgets and sampling limits must be positive")
         if (self.minimum_ensemble_gain_pp < 0 or
-            self.max_mape_regression_pp < 0):
+            self.max_mape_regression_pp < 0 or
+            self.screen_max_mdape <= 0):
             raise ValueError("Admission constraints must be nonnegative")
 
     def record(self):
@@ -127,7 +129,8 @@ class FactoryRun:
         path.write_text(json.dumps(setup, indent=2)+"\n", encoding="utf-8")
         self.fold_features = {}
         self.truth_cache = {}
-        self.events = []
+        events_file = self.root / "events.json"
+        self.events = json.loads(events_file.read_text(encoding="utf-8")) if events_file.is_file() else []
 
     def _cohorts(self, month):
         period = pd.Period(month, freq="M")
@@ -203,7 +206,15 @@ class FactoryRun:
 
     def _predict_fold(self, candidate, month, params, *, fold_name, cache=True):
         fold = self._prepare_fold(candidate, month)
-        dest = self.root / "members" / candidate.name / fold_name / f"{month}.csv"
+        # Important: an interrupted Optuna run may later find a better trial.
+        # Include the FULL parameter set in the cache key, not just candidate ID.
+        param_id = hashlib.sha256(
+            json.dumps(params, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+        dest = (
+            self.root / "members" / candidate.name /
+            fold_name / param_id / f"{month}.csv"
+        )
         if cache and dest.is_file():
             df = pd.read_csv(dest, dtype={"ml_num": str})
             if (len(df) == len(fold["ids"]) and
@@ -336,7 +347,9 @@ class FactoryRun:
             existing = None
         if existing is not None:
             meta = existing.get("metadata", {})
-            if meta.get("candidate") != candidate.record() or meta.get("parameters") != params:
+            if (json.dumps(meta.get("candidate"), sort_keys=True) !=
+                json.dumps(candidate.record(), sort_keys=True) or
+                meta.get("parameters") != params):
                 raise ValueError("Saved model name already belongs to different configuration")
             return
         cutoff = self.cfg.audit_months[0]
@@ -419,9 +432,25 @@ class FactoryRun:
                     fold_name="screen",
                 )
                 screen = metrics(fold["truth"], from_time)
-                # Stage B: strict earlier-fold Optuna tuning. This v1 performs
-                # it for all generated candidates; future pruning can use an
-                # independently fixed screen threshold/budget.
+                # Cheap catastrophic-model rejection before any Optuna calls.
+                # This is a predefined absolute cutoff, NOT adaptively fitted
+                # to an outer validation or audit result.
+                if screen["mdape"] > self.cfg.screen_max_mdape:
+                    roster["processed"].append(candidate.name)
+                    roster_path.write_text(
+                        json.dumps(roster, indent=2, default=str)+"\n",
+                        encoding="utf-8",
+                    )
+                    self._event({
+                        "generation": generation,
+                        "candidate": candidate.record(),
+                        "screen": screen, "admitted": False,
+                        "reason": "failed_predeclared_screen_cutoff",
+                    })
+                    self.fold_features.clear()
+                    print("  Skipped Optuna: poor cheap screen", flush=True)
+                    continue
+                # Stage B: strict earlier-fold Optuna tuning of survivors.
                 params, tuned_score = self._tune(candidate)
                 prediction = self._assembled(
                     candidate, self.cfg.selection_months, params,
