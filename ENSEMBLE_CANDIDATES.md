@@ -244,3 +244,100 @@ This outlines the eventual factory; the current notebook only implements
 fixed-prediction shrinkage comparisons and the initial feature-bagging
 pilot. Do not accidentally label the proposal as a running evolutionary
 search engine.
+
+## AutoML factory v1 (now implemented)
+
+`ensemble_automl_factory.py` and `models/automl_search.py` implement
+a **bounded, opt-in starter**, not the complete multi-family evolutionary
+optimizer. Execute `RUN_AUTOML_FACTORY=True` in `ensemble_starter.ipynb`.
+Install the optional dependency using `pip install optuna`.
+
+- Candidate generator: deterministic random combinations of selected 47,
+  selected+extra, weighted, uniform or full binary text; independent
+  bootstrap/subbag/all-row fitting; valid combinations of spatial splines,
+  geo context, market or no add-on.
+- Historical comparable features and training-only BoW vocabulary are
+  fitted on all eligible chronological training homes **before** fitting
+  XGBoost on bootstrap/subbag rows. Model families beyond XGBoost are
+  future work.
+- Cheap gross-error check (`screen_max_mdape=22%`), then two Optuna trials
+  per surviving candidate by default. This guard only rejects
+  catastrophically poor models; it is not a general ranking threshold.
+- Optuna tuning: Mar–Apr 2025. Ensemble selection and a fixed nonnegative
+  geometric-blend weight grid: May–Jun 2025. The member must improve
+  the weighted `0.65*MdAPE + 0.35*MAPE` objective by at least
+  0.02 percentage points without more than 0.03 points of MAPE regression.
+- **Separate one-time shadow audit:** Jul–Aug 2025, opened only by the
+  explicit `RUN_AUTOML_SHADOW_AUDIT=True` notebook cell after the model
+  roster and weights are frozen. It locks the roster against adding further
+  generations in that directory. These historic months were consulted in
+  other experiments; this is not a new untouched test.
+- Persist SQLite Optuna studies, member predictions, roster, member weights,
+  event history, cohort-scoped train settings, selected-ensemble predictions
+  and shadow-audit predictions. Optional accepted-member snapshots contain
+  one fitted feature provider and the model's terms, columns and log target
+  offset, saved in `saved_models/off_market/`.
+- Resume with the same settings and output directory without redoing
+  already-processed candidates. **Increase `generations` before opening
+  the shadow audit** to extend the same fixed-budget experiment; other
+  configuration changes require a new output directory because selection
+  comparisons would be incompatible. After audit, the roster is locked
+  against further selection in that directory.
+
+Initially run **1 generation × 2 candidates × 2 Optuna trials**.
+Start only one factory process per output directory; the v1 roster writer is
+not a transactional multi-worker scheduler.
+
+Remaining before a full final factory:
+
+1. Candidate-replacement/removal and adaptive pool size, beyond the current
+   additive maximum of `max_members`.
+2. Independent LightGBM/CatBoost members and integrated model-specific
+   Matérn/Tensor GAM residual correctors.
+3. Nested rolling evaluation that tracks adaptation of the selection set
+   across many generations and a fresh final holdout if one becomes available.
+4. Refit the final selected architectures on all legally available data with
+   700-tree/full-strength parameters before submission.
+5. Save a single weighted meta-ensemble of all final fitted members and
+   reconcile shared versus separate historical feature transformers.
+
+### Crash-safe pause and resume
+
+The factory now treats its output directory as a **durable checkpoint**,
+not a disposable report folder. Run **one writer process** per output
+directory and stop it using Jupyter's Interrupt Kernel, Ctrl+C, or ordinary
+process termination; rerun the same call with unchanged data/configuration.
+
+Recovery boundaries:
+
+| Interrupted operation | What survives | What may need repeating |
+| --- | --- | --- |
+| Completed candidate / ensemble admission | Atomic `roster.json` includes BOTH the membership decision and event | Nothing from that candidate's Optuna search or selection, except missing optional fitted-model snapshot serialization |
+| Between roster write and event export | `roster.json` is authoritative | `events.json` regenerated from roster history |
+| Completed Optuna trial | SQLite study retains its state and score | Nothing |
+| Partly completed Optuna trial | Previously completed per-month objective values under `optuna/fold_scores/` and the trial's suggested parameters | Currently running fold's fit; an orphan `RUNNING` trial is failed/re-queued with the same known parameters |
+| Completed candidate-month prediction | Atomic cache keyed by full parameter fingerprint | Nothing |
+| During model binary saving | `save_model` stages binaries before atomic directory replacement | Only the interrupted snapshot fit/save; missing accepted snapshots are recovered on restart |
+| During the shadow audit | Early, durable `shadow_audit_lock.json` with `pending` state and candidate prediction caches | Incomplete audit folds; final `complete` status is written last |
+
+`progress.json` is the last recorded stage (not the source of truth).
+`manifest.json` and `roster.json` are authoritative. Most JSON and
+CSV outputs are written to temporary files in the same directory and
+atomically replaced; an abrupt stop may leave a harmless `.tmp` file.
+The OS-backed `.run.lock` **does not need to be deleted** after a crash:
+the operating system releases it. Never run two sessions against the same
+directory at once, and keep the output on a local disk.
+
+**Limitation:** a single XGBoost `fit()` call interrupted mid-fit starts
+again, since incremental boosting-round checkpoints are not enabled.
+Likewise, unsaved RAM-only fitted feature transformers are recreated for
+an interrupted fold. Progress is preserved at *completed training
+folds/trials/candidate* boundaries, not every machine instruction.
+Optuna's sampler may generate a different sequence of subsequent proposals
+after a process restart; completed trials and their scores are not lost.
+
+Once the audit is opened (even if it is interrupted in the middle), the
+selected roster cannot be extended in that directory. Keep audit disabled
+until the desired number of generations is complete. To change budgets
+other than `generations` or the selection protocol, use a fresh output
+directory to avoid incompatible cached scores.
