@@ -751,7 +751,14 @@ class FactoryRun:
         """
         roster_path = self.root / "roster.json"
         if not roster_path.is_file():
-            raise FileNotFoundError("First complete the AutoML selection run")
+            raise FileNotFoundError(
+                "No AutoML selection checkpoint found at "
+                f"{roster_path.resolve()}. "
+                "In ensemble_starter.ipynb, set RUN_AUTOML_FACTORY=True "
+                "and run the factory cell first. If you have already trained "
+                "candidates, check the notebook's working directory and "
+                "AUTOML_SETTINGS['output_dir']; resume with that original path."
+            )
         roster = json.loads(roster_path.read_text(encoding="utf-8"))
         if not roster.get("members"):
             raise ValueError("No accepted ensemble members to audit")
