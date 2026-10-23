@@ -237,10 +237,17 @@ def predict_release(
     if out.exists():
         raise FileExistsError(f"Will not overwrite an existing submission: {out}")
     out.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({
+    from models.automl_checkpoint import write_csv
+    from check_submission import check_file
+    write_csv(out, pd.DataFrame({
         "ml_num": homes.ml_num.to_numpy(),
         "predicted_price": np.round(prices).astype(np.int64),
-    }).to_csv(out, index=False)
+    }))
+    problems = check_file(out, homes.ml_num.astype(str))
+    if problems:
+        out.unlink(missing_ok=True)
+        raise ValueError("Off-market submission validation failed: " +
+                         "; ".join(problems))
     return out
 
 
