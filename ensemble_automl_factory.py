@@ -206,6 +206,42 @@ class FactoryRun:
             "unique_rows": len(np.unique(row_ids)),
             "total_history": len(train),
         }
+        # Record the exact per-fold vocabulary and feature schema. A
+        # candidate's legal training vocabulary can vary across months.
+        # Never materialize validation labels into this feature manifest.
+        row_digest = hashlib.sha256(
+            np.asarray(row_ids, dtype=np.int64).tobytes()
+        ).hexdigest()
+        provenance = {
+            "candidate": candidate.record(),
+            "month": str(month),
+            "training_cutoff_exclusive": str(
+                pd.Period(month, freq="M").start_time.date()
+            ),
+            "total_training_rows": len(train),
+            "estimator_training_rows": len(row_ids),
+            "unique_estimator_rows": len(np.unique(row_ids)),
+            "row_index_sha256": row_digest,
+            "heldout_homes": len(held),
+            "feature_provider": _feature_name(candidate),
+            "text_terms": list(terms),
+            "selected_columns": list(columns),
+        }
+        details_path = (
+            self.root / "members" / candidate.name / "feature_manifests" /
+            f"{month}.json"
+        )
+        if details_path.is_file() and json.loads(
+            details_path.read_text(encoding="utf-8")
+        ) != json.loads(json.dumps(provenance)):
+            raise ValueError(
+                "Feature bag / column manifest changed: "
+                f"{details_path}"
+            )
+        details_path.parent.mkdir(parents=True, exist_ok=True)
+        details_path.write_text(
+            json.dumps(provenance, indent=2)+"\n", encoding="utf-8"
+        )
         self.fold_features[key] = fold
         return fold
 
