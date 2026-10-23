@@ -8,6 +8,7 @@ Examples:
   python ensemble_rc.py run --profile day_cloud --checkpoint-archive /content/drive/MyDrive/automl/checkpoint.zip
   python ensemble_rc.py status
   python ensemble_rc.py audit --profile overnight_local
+  python ensemble_rc.py benchmark --profile overnight_local
   python ensemble_rc.py finalize --profile overnight_local
   python ensemble_rc.py predict
   python ensemble_rc.py export --checkpoint-archive D:/automl/checkpoint.zip
@@ -29,7 +30,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command", choices=("run", "audit", "finalize", "predict",
-                            "status", "export", "restore"),
+                            "status", "export", "restore", "benchmark"),
     )
     parser.add_argument(
         "--profile", choices=tuple(WORKER_PROFILES),
@@ -133,6 +134,18 @@ def main(argv=None):
         )
         print("Frozen audit metrics:", summary["shadow_audit_metrics"])
         print("First-member reference:", summary["audit_first_reference_metrics"])
+        return 0
+    if args.command == "benchmark":
+        from ensemble_automl_factory import FactorySettings
+        from ensemble_release_candidate import benchmark_release
+        report, _ = benchmark_release(
+            FactorySettings(**settings),
+            threads=profile.xgb_threads,
+            checkpoint_archive=args.checkpoint_archive,
+        )
+        print("Full historical six-month benchmark:", report["ensemble"])
+        print("First reference model:", report["first_reference"])
+        print("Prior evaluations inspected this period: not an untouched holdout.")
         return 0
     if args.command == "finalize":
         from ensemble_automl_factory import FactorySettings
