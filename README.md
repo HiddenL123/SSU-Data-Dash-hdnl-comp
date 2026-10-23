@@ -68,3 +68,18 @@ SYN-0123456,815000
 - Neighbourhoods, coordinates and streets are synthetic, so map data will not line up.
 - No real listing or sales records.
 - Do not try to recover the hidden test prices.
+
+
+## Fitted model snapshots
+
+New reusable model artifacts are separated by prediction task:
+
+- `saved_models/off_market/<run_name>/`: off-market XGBoost and feature-bagged ensembles
+- `saved_models/list_aware/<run_name>/`: list-aware models and ensembles
+- Existing `saved_models/<legacy_name>/`: **legacy** mixed-track snapshots; unchanged and still readable
+
+Use `save_model(model, name, track="off_market", metadata=...)` or
+`load_model(name, track="list_aware")` in new workflows. Existing legacy
+`load_model(name)` calls continue working. See [saved_models/README.md](saved_models/README.md)
+for the catalog API and optional migration of previously fitted monthly
+validation models without retraining.
