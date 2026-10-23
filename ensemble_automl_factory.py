@@ -509,6 +509,19 @@ class FactoryRun:
                     min_gain=self.cfg.minimum_ensemble_gain_pp,
                     max_mape_regression=self.cfg.max_mape_regression_pp,
                 )
+                # Diversity is descriptive. Correlation alone is not a
+                # rejection criterion; marginal paired ensemble gain is.
+                error_corr = None
+                if current_prediction is not None:
+                    truth_log = np.log(prediction.sold_price.to_numpy(dtype=float))
+                    old_errors = truth_log - np.log(current_prediction)
+                    new_errors = truth_log - np.log(
+                        prediction.predicted_price.to_numpy(dtype=float)
+                    )
+                    if np.std(old_errors) > 0 and np.std(new_errors) > 0:
+                        error_corr = float(
+                            np.corrcoef(old_errors, new_errors)[0, 1]
+                        )
                 accept = bool(decision["accept"] and len(weights) < self.cfg.max_members)
                 record = {
                     "generation": generation, "candidate": candidate.record(),
@@ -518,6 +531,7 @@ class FactoryRun:
                     "weight": decision["weight"] if accept else 0.,
                     "marginal_gain": decision["gain"],
                     "solo": decision["solo"],
+                    "error_corr_with_ensemble": error_corr,
                     "updated_metrics": decision["updated"] if accept else
                         (metrics(current.sold_price, current.predicted_price)
                          if current is not None else {}),
@@ -557,8 +571,15 @@ class FactoryRun:
             current.sold_price.to_numpy(), current.predicted_price.to_numpy()
         )
         current.to_csv(self.root / "selection_ensemble_predictions.csv", index=False)
+        selection_monthly = {
+            month: metrics(
+                current.loc[current.month == month, "sold_price"].to_numpy(),
+                current.loc[current.month == month, "predicted_price"].to_numpy(),
+            ) for month in self.cfg.selection_months
+        }
         outcome = {
             "selection_metrics": selection_score,
+            "selection_monthly_metrics": selection_monthly,
             "effective_member_weights": weights,
             "members": [entry["candidate"]["name"] for entry in roster["members"]],
             "shadow_audit_status": (
@@ -572,8 +593,11 @@ class FactoryRun:
                 json.dumps(outcome, indent=2)+"\n", encoding="utf-8"
             )
         print("\nAutoML ensemble selection:", selection_score, flush=True)
-        print("Shadow audit NOT opened; explicitly enable its separate cell.",
-              flush=True)
+        print(
+            "Shadow audit is LOCKED." if audit_lock.is_file() else
+            "Shadow audit NOT opened; explicitly enable its separate cell.",
+            flush=True,
+        )
         return outcome, pd.DataFrame(self.events), current
 
     def audit(self):
@@ -650,9 +674,16 @@ class FactoryRun:
         selection = json.loads(
             (self.root / "summary.json").read_text(encoding="utf-8")
         )
+        audit_monthly = {
+            month: metrics(
+                results.loc[results.month == month, "sold_price"].to_numpy(),
+                results.loc[results.month == month, "predicted_price"].to_numpy(),
+            ) for month in self.cfg.audit_months
+        }
         selection.update({
             "shadow_audit_status": "locked",
             "shadow_audit_metrics": audit_score,
+            "shadow_audit_monthly_metrics": audit_monthly,
             "audit_first_reference_metrics": audit_reference,
             "warning": (
                 "Shadow audit consulted ONCE after factory selection. "
