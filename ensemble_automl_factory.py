@@ -21,6 +21,9 @@ import numpy as np
 import pandas as pd
 
 import data
+from models.automl_checkpoint import (
+    exclusive_factory_lock, write_json, write_csv,
+)
 from models.automl_search import (
     Candidate, choose_admission, generate_candidates, log_blend,
     metrics, objective, updated_weights,
@@ -131,7 +134,8 @@ class FactoryRun:
         path = self.root / "manifest.json"
         if path.is_file() and json.loads(path.read_text(encoding="utf-8")) != setup:
             raise ValueError("Factory settings/data changed: use a NEW output directory")
-        path.write_text(json.dumps(setup, indent=2)+"\n", encoding="utf-8")
+        if not path.is_file():
+            write_json(path, setup)
         self.fold_features = {}
         self.truth_cache = {}
         events_file = self.root / "events.json"
@@ -239,9 +243,7 @@ class FactoryRun:
                 f"{details_path}"
             )
         details_path.parent.mkdir(parents=True, exist_ok=True)
-        details_path.write_text(
-            json.dumps(provenance, indent=2)+"\n", encoding="utf-8"
-        )
+        write_json(details_path, provenance)
         self.fold_features[key] = fold
         return fold
 
@@ -281,10 +283,10 @@ class FactoryRun:
         metrics(fold["truth"], predicted)  # validate positive finite
         if cache:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            pd.DataFrame({
+            write_csv(dest, pd.DataFrame({
                 "ml_num": fold["ids"], "sold_price": fold["truth"],
                 "predicted_price": predicted,
-            }).to_csv(dest, index=False)
+            }))
         return predicted
 
     def _assembled(self, candidate, months, params, *, stage):
@@ -359,26 +361,74 @@ class FactoryRun:
                     "colsample_bytree", .70, 1.0
                 ),
             }
+            # Fold-level score cache is keyed by FULL model hyperparameters.
+            # Failed or interrupted Optuna trials can be re-queued with the
+            # same values. Completed folds are then reused exactly.
+            trial_key = hashlib.sha256(
+                json.dumps(params, sort_keys=True).encode("utf-8")
+            ).hexdigest()[:20]
             scores = []
             for month in self.cfg.tuning_months:
-                # Every trial gets identical chronological folds; the fitted
-                # feature context is reused but XGBoost is always fresh.
-                fold = self._prepare_fold(candidate, month)
-                model = _make_estimator(
-                    {**XGB_TUNED, **params}, self.cfg.trees
+                score_path = (
+                    self.root / "optuna" / "fold_scores" /
+                    candidate.name / trial_key / f"{month}.json"
                 )
-                model.set_params(random_state=candidate.seed)
-                model.fit(fold["X"], fold["y"])
-                prices = np.exp(
-                    fold["offset"] + np.asarray(model.predict(fold["H"]), float)
-                )
-                scores.append(objective(fold["truth"], prices))
+                if score_path.is_file():
+                    stored = json.loads(score_path.read_text(encoding="utf-8"))
+                    score = float(stored["objective"])
+                    if not np.isfinite(score):
+                        raise ValueError(f"Nonfinite saved Optuna fold score: {score_path}")
+                else:
+                    # Historical features are fitted on this fold's eligible
+                    # training sales only, never on current/future outcomes.
+                    fold = self._prepare_fold(candidate, month)
+                    model = _make_estimator(
+                        {**XGB_TUNED, **params}, self.cfg.trees
+                    )
+                    model.set_params(random_state=candidate.seed)
+                    model.fit(fold["X"], fold["y"])
+                    prices = np.exp(
+                        fold["offset"] + np.asarray(model.predict(fold["H"]), float)
+                    )
+                    score = float(objective(fold["truth"], prices))
+                    write_json(score_path, {
+                        "candidate": candidate.name,
+                        "month": str(month),
+                        "parameters": params,
+                        "objective": score,
+                    })
+                scores.append(score)
                 trial.report(float(np.mean(scores)), step=len(scores))
                 if trial.should_prune():
                     raise optuna.TrialPruned()
             return float(np.mean(scores))
 
-        remaining = max(0, self.cfg.optuna_trials - len(study.trials))
+        # After Ctrl+C or an OS/process kill, Optuna can retain RUNNING
+        # trials in SQLite. Single-writer lock guarantees none are active
+        # here; reclassify orphan trials as interrupted and retry their
+        # budget instead of counting them as completed.
+        for trial in study.trials:
+            if trial.state == optuna.trial.TrialState.RUNNING:
+                study.tell(
+                    trial.number, state=optuna.trial.TrialState.FAIL
+                )
+                # Rerun the very same hyperparameters, not a newly drawn
+                # trial. Fold scores already written before the interruption
+                # can be reused from the exact-parameter cache above.
+                if trial.params:
+                    study.enqueue_trial(dict(trial.params))
+                print(
+                    f"  Recovering interrupted Optuna trial #{trial.number} "
+                    f"for {candidate.name}",
+                    flush=True,
+                )
+        finished = sum(
+            trial.state in (
+                optuna.trial.TrialState.COMPLETE,
+                optuna.trial.TrialState.PRUNED,
+            ) for trial in study.trials
+        )
+        remaining = max(0, self.cfg.optuna_trials - finished)
         if remaining:
             study.optimize(trial_objective, n_trials=remaining, n_jobs=1)
         complete = [
@@ -427,14 +477,35 @@ class FactoryRun:
         })
         print(f"  Saved fitted member: saved_models/off_market/{name}", flush=True)
 
-    def _event(self, event):
-        self.events.append(event)
-        (self.root / "events.json").write_text(
-            json.dumps(self.events, indent=2, default=str)+"\n",
-            encoding="utf-8",
-        )
+    def _progress(self, stage, candidate=None, **details):
+        """Small atomic status view, not a second source of truth."""
+        write_json(self.root / "progress.json", {
+            "stage": stage,
+            "candidate": candidate.name if candidate is not None else None,
+            **details,
+        })
+
+    def _commit_candidate(self, roster, event):
+        """One atomic transaction for a candidate's decision and event.
+
+        roster.json is authoritative. If interrupted before its os.replace,
+        candidate is retried; if interrupted afterward, the decision is
+        replayed and events.json is repaired on restart.
+        """
+        name = event["candidate"]["name"]
+        if name in roster["processed"]:
+            raise ValueError(f"Candidate already committed: {name}")
+        roster["processed"].append(name)
+        roster["history"].append(event)
+        write_json(self.root / "roster.json", roster)
+        self.events = list(roster["history"])
+        write_json(self.root / "events.json", self.events)
 
     def run(self):
+        with exclusive_factory_lock(self.root):
+            return self._run_locked()
+
+    def _run_locked(self):
         """Run bounded generations and report final fixed-weight shadow audit."""
         roster_path = self.root / "roster.json"
         if roster_path.exists():
@@ -444,7 +515,25 @@ class FactoryRun:
             if roster.get("version") != VERSION:
                 raise ValueError("Old roster version")
         else:
-            roster = {"version": VERSION, "members": [], "processed": []}
+            roster = {
+                "version": VERSION, "members": [], "processed": [],
+                "history": [],
+            }
+            write_json(roster_path, roster)
+        # Old v1 rosters stored events in a separate file. Migrate their
+        # existing decisions only when known, then keep roster history
+        # authoritative. Crash in the legacy gap cannot be fully recovered.
+        if "history" not in roster:
+            historic = [
+                event for event in self.events
+                if event.get("candidate", {}).get("name") in roster["processed"]
+            ]
+            roster["history"] = historic
+            write_json(roster_path, roster)
+        self.events = list(roster["history"])
+        # Repair a crash between the atomic roster commit and rebuilding
+        # events.json. Never reconstruct roster from the weaker events view.
+        write_json(self.root / "events.json", self.events)
         configs, weights, current = {}, {}, None
         # Replay previously admitted members using their frozen parameters,
         # without refitting Optuna. Reuse cached member predictions.
@@ -466,7 +555,21 @@ class FactoryRun:
             weights = updated_weights(
                 weights, candidate.name, member["admitted_alpha"]
             )
+        # If stopped after accepting a candidate but before serializing its
+        # snapshot, rebuild that missing artifact on restart. Completed
+        # members are preserved; only missing models are refitted.
+        if self.cfg.save_accepted_snapshots:
+            for member in roster["members"]:
+                self._save_member(
+                    Candidate(**member["candidate"]),
+                    member["parameters"],
+                )
         processed = set(roster["processed"])
+        self._progress(
+            "resumed" if processed else "starting",
+            processed_count=len(processed),
+            accepted_members=len(weights),
+        )
         audit_lock = self.root / "shadow_audit_lock.json"
         if audit_lock.is_file():
             remaining = [
@@ -489,37 +592,30 @@ class FactoryRun:
                 if candidate.name in processed:
                     continue
                 if len(weights) >= self.cfg.max_members:
-                    roster["processed"].append(candidate.name)
-                    roster_path.write_text(
-                        json.dumps(roster, indent=2, default=str)+"\n",
-                        encoding="utf-8",
-                    )
-                    self._event({
+                    self._commit_candidate(roster, {
                         "generation": generation, "candidate": candidate.record(),
                         "admitted": False, "reason": "ensemble_member_cap_reached",
                     })
                     continue
                 print(f"\n[{generation+1}/{self.cfg.generations}] "
                       f"Trying {candidate.name}: {candidate.record()}", flush=True)
+                self._progress("screening", candidate, generation=generation)
                 t0 = perf_counter()
                 # Stage A: cheap untuned screen on FIRST earlier tuning fold.
                 baseline_params = dict(XGB_TUNED)
-                fold = self._prepare_fold(candidate, self.cfg.tuning_months[0])
                 from_time = self._predict_fold(
                     candidate, self.cfg.tuning_months[0], baseline_params,
                     fold_name="screen",
                 )
-                screen = metrics(fold["truth"], from_time)
+                _, held = self._cohorts(self.cfg.tuning_months[0])
+                screen = metrics(
+                    held.sold_price.to_numpy(dtype=float), from_time
+                )
                 # Cheap catastrophic-model rejection before any Optuna calls.
                 # This is a predefined absolute cutoff, NOT adaptively fitted
                 # to an outer validation or audit result.
                 if screen["mdape"] > self.cfg.screen_max_mdape:
-                    roster["processed"].append(candidate.name)
-                    roster_path.write_text(
-                        json.dumps(roster, indent=2, default=str)+"\n",
-                        encoding="utf-8",
-                    )
-                    self._event({
+                    self._commit_candidate(roster, {
                         "generation": generation,
                         "candidate": candidate.record(),
                         "screen": screen, "admitted": False,
@@ -529,7 +625,9 @@ class FactoryRun:
                     print("  Skipped Optuna: poor cheap screen", flush=True)
                     continue
                 # Stage B: strict earlier-fold Optuna tuning of survivors.
+                self._progress("optuna_tuning", candidate, generation=generation)
                 params, tuned_score = self._tune(candidate)
+                self._progress("selection_predictions", candidate, generation=generation)
                 prediction = self._assembled(
                     candidate, self.cfg.selection_months, params,
                     stage="selection",
@@ -555,8 +653,11 @@ class FactoryRun:
                         prediction.predicted_price.to_numpy(dtype=float)
                     )
                     if np.std(old_errors) > 0 and np.std(new_errors) > 0:
-                        error_corr = float(
+                        correlation = float(
                             np.corrcoef(old_errors, new_errors)[0, 1]
+                        )
+                        error_corr = (
+                            correlation if np.isfinite(correlation) else None
                         )
                 accept = bool(decision["accept"] and len(weights) < self.cfg.max_members)
                 record = {
@@ -587,16 +688,14 @@ class FactoryRun:
                         "candidate": candidate.record(), "parameters": params,
                         "admitted_alpha": alpha,
                     })
-                    if self.cfg.save_accepted_snapshots:
-                        self._save_member(candidate, params)
-                roster["processed"].append(candidate.name)
-                # Commit progress per candidate; already-completed models can
-                # be resumed with the same config, never silently overwritten.
-                roster_path.write_text(
-                    json.dumps(roster, indent=2, default=str)+"\n",
-                    encoding="utf-8",
-                )
-                self._event(record)
+                self._progress("checkpointing", candidate, generation=generation)
+                # Atomic roster commit BEFORE potentially slow model snapshot
+                # serialization. On restart, a missing snapshot is recovered
+                # from this already-committed member/configuration.
+                self._commit_candidate(roster, record)
+                if accept and self.cfg.save_accepted_snapshots:
+                    self._progress("saving_member", candidate, generation=generation)
+                    self._save_member(candidate, params)
                 self.fold_features.clear()  # avoid accumulating 1k-BoW matrices
                 print(f"  {'ADMIT' if accept else 'reject'} "
                       f"gain={decision['gain']} ensemble size={len(weights)}",
@@ -606,7 +705,7 @@ class FactoryRun:
         selection_score = metrics(
             current.sold_price.to_numpy(), current.predicted_price.to_numpy()
         )
-        current.to_csv(self.root / "selection_ensemble_predictions.csv", index=False)
+        write_csv(self.root / "selection_ensemble_predictions.csv", current)
         selection_monthly = {
             month: metrics(
                 current.loc[current.month == month, "sold_price"].to_numpy(),
@@ -625,9 +724,12 @@ class FactoryRun:
         summary_path = self.root / "summary.json"
         # Do not destroy a previous audit summary during harmless resume.
         if not audit_lock.is_file():
-            summary_path.write_text(
-                json.dumps(outcome, indent=2)+"\n", encoding="utf-8"
-            )
+            write_json(summary_path, outcome)
+        self._progress(
+            "selection_complete",
+            processed_count=len(roster["processed"]),
+            accepted_members=len(roster["members"]),
+        )
         print("\nAutoML ensemble selection:", selection_score, flush=True)
         print(
             "Shadow audit is LOCKED." if audit_lock.is_file() else
@@ -637,6 +739,10 @@ class FactoryRun:
         return outcome, pd.DataFrame(self.events), current
 
     def audit(self):
+        with exclusive_factory_lock(self.root):
+            return self._audit_locked()
+
+    def _audit_locked(self):
         """Open a one-time shadow diagnostic AFTER roster/weights are frozen.
 
         Audit metrics never influence candidate acceptance. Once opened, the
@@ -670,14 +776,34 @@ class FactoryRun:
                 raise RuntimeError(
                     "Selected model roster changed after the shadow audit"
                 )
-            summary = json.loads(
-                (self.root / "summary.json").read_text(encoding="utf-8")
-            )
-            saved = pd.read_csv(
-                self.root / "shadow_audit_predictions.csv",
-                dtype={"ml_num": str},
-            )
-            return summary, saved
+            if lock.get("status", "complete") == "complete":
+                summary = json.loads(
+                    (self.root / "summary.json").read_text(encoding="utf-8")
+                )
+                saved = pd.read_csv(
+                    self.root / "shadow_audit_predictions.csv",
+                    dtype={"ml_num": str},
+                )
+                return summary, saved
+            if lock.get("status") != "pending":
+                raise ValueError("Unknown audit checkpoint status")
+            print("Resuming interrupted shadow audit...", flush=True)
+        else:
+            # Audit lock MUST be written before any audit calculation or
+            # output. Otherwise a crash after revealing audit scores but
+            # before locking would allow continued selection on that result.
+            write_json(lock_path, {
+                "roster_sha256": checksum,
+                "members": [
+                    m["candidate"]["name"] for m in roster["members"]
+                ],
+                "audit_months": list(self.cfg.audit_months),
+                "status": "pending",
+            })
+        self._progress(
+            "audit_running",
+            accepted_members=len(roster["members"]),
+        )
         weights = {}
         streams = []
         for member in roster["members"]:
@@ -726,21 +852,18 @@ class FactoryRun:
                 "Historically these months may have been examined elsewhere."
             ),
         })
-        # Write fully scored outputs and audit lock only after successful fits.
-        results.to_csv(
-            self.root / "shadow_audit_predictions.csv", index=False
-        )
-        (self.root / "summary.json").write_text(
-            json.dumps(selection, indent=2)+"\n", encoding="utf-8"
-        )
-        lock_path.write_text(
-            json.dumps({
-                "roster_sha256": checksum,
-                "members": selection["members"],
-                "audit_months": list(self.cfg.audit_months),
-            }, indent=2)+"\n",
-            encoding="utf-8",
-        )
+        # Pending audit lock is already durable. Independently atomic
+        # artifacts can be regenerated from cached predictions after a
+        # crash; final status is committed LAST.
+        write_csv(self.root / "shadow_audit_predictions.csv", results)
+        write_json(self.root / "summary.json", selection)
+        write_json(lock_path, {
+            "roster_sha256": checksum,
+            "members": selection["members"],
+            "audit_months": list(self.cfg.audit_months),
+            "status": "complete",
+        })
+        self._progress("audit_complete", accepted_members=len(roster["members"]))
         print("Frozen shadow audit:", audit_score, flush=True)
         return selection, results
 
