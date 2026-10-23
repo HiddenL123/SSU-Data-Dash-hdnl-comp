@@ -204,29 +204,46 @@ def compare_list_aware_spline_gam(
            _jsonable_spec(spec) for model in reference_models[1:]):
         raise ValueError("Saved list-aware XGBoost specifications differ")
 
-    # CatBoost is a reference only. Never block the XGBoost experiments
-    # when that optional saved snapshot was not kept.
+    # CatBoost is an optional reference. Prefer the new list-aware namespace
+    # for fitted single-track monthly snapshots, then explicitly support the
+    # old flat mixed-track legacy format without moving those old binaries.
     if catboost_models is None and catboost_model_name is not None:
         from save_model import load_model, list_saved_models
         try:
-            catboost_models = load_model(catboost_model_name)
-        except FileNotFoundError as exc:
-            raise FileNotFoundError(
-                f"Requested CatBoost Huber snapshot {catboost_model_name!r} "
-                f"was not saved. Available snapshots: {list_saved_models()}. "
-                "Pass catboost_model_name=None to run XGBoost only."
-            ) from exc
+            catboost_models = load_model(
+                catboost_model_name, track="list_aware"
+            )
+        except FileNotFoundError:
+            try:
+                catboost_models = load_model(catboost_model_name)
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(
+                    f"Requested CatBoost Huber snapshot {catboost_model_name!r} "
+                    "was not saved in list-aware or legacy storage. "
+                    f"List-aware: {list_saved_models(track='list_aware')}; "
+                    f"legacy: {list_saved_models()}. "
+                    "Pass catboost_model_name=None to run XGBoost only."
+                ) from exc
 
     cat_models = None
     if catboost_models is not None:
-        if len(catboost_models) != len(periods) or any(
-            len(pair) != 2 for pair in catboost_models
-        ):
+        if not isinstance(catboost_models, (list, tuple)) or len(catboost_models) != len(periods):
             raise ValueError(
-                "CatBoost snapshot must contain one off-market/list-aware pair "
-                "for each validation month"
+                "CatBoost snapshot must contain one model per validation month"
             )
-        cat_models = [pair[1] for pair in catboost_models]
+        if all(isinstance(pair, (list, tuple)) and len(pair) == 2
+               for pair in catboost_models):
+            # Original flat legacy shape: [month][off_market, list_aware].
+            cat_models = [pair[1] for pair in catboost_models]
+        elif all(not isinstance(pair, (list, tuple))
+                 for pair in catboost_models):
+            # New track-scoped shape: [month][list_aware_model].
+            cat_models = list(catboost_models)
+        else:
+            raise ValueError(
+                "CatBoost snapshot must contain either individual list-aware "
+                "models or ordered off-market/list-aware pairs"
+            )
         cat_spec = _check_catboost_huber(cat_models[0])
         if any(_jsonable_spec(_check_catboost_huber(m)) !=
                _jsonable_spec(cat_spec) for m in cat_models[1:]):

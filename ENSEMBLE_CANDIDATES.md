@@ -107,3 +107,27 @@ not be mixed with differently configured folds.
 
 **No automated proof or performance claim** is implied by adding the roster.
 Run the tests and pilot on your local housing data before promoting members.
+
+
+## Saving the growing ensemble model pool
+
+Track-scoped storage is now active. New fitted member collections should use
+`saved_models/off_market/<run_name>/` or
+`saved_models/list_aware/<run_name>/`; the existing flat folder is **legacy**,
+left untouched for the original 6-month XGBoost snapshots.
+
+The opt-in `ensemble_starter.ipynb` pilot can set
+`SAVE_FITTED_ENSEMBLE_MODELS=True` to persist a **reusable bundle** containing
+one fitted feature provider (historical comparable index + training-fitted text
+vocabulary), independently fitted XGBoost members, selected columns, log
+target offsets and member seeds. Avoid saving only XGBoost trees or prediction
+CSVs: those are insufficient to reconstruct full ensemble inference.
+The bundle saves with a deterministic experiment-fingerprint name under
+`saved_models/off_market/`, without overwriting older experiments.
+
+Load with `load_model(name, track="off_market")`, call
+`predict_member(homes, "selected_47_reference")` for one member or
+`predict_members(homes)` for a prediction table. The bundled `predict()`
+offers an equal-weight geometric blend by default; it is **not** a frozen,
+validated production ensemble. The list-aware pool will be built separately
+with its own target and historical validation.
