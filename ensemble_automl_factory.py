@@ -449,6 +449,14 @@ class FactoryRun:
         })
         print(f"  Saved fitted member: saved_models/off_market/{name}", flush=True)
 
+    def _progress(self, stage, candidate=None, **details):
+        """Small atomic status view, not a second source of truth."""
+        write_json(self.root / "progress.json", {
+            "stage": stage,
+            "candidate": candidate.name if candidate is not None else None,
+            **details,
+        })
+
     def _commit_candidate(self, roster, event):
         """One atomic transaction for a candidate's decision and event.
 
@@ -529,6 +537,11 @@ class FactoryRun:
                     member["parameters"],
                 )
         processed = set(roster["processed"])
+        self._progress(
+            "resumed" if processed else "starting",
+            processed_count=len(processed),
+            accepted_members=len(weights),
+        )
         audit_lock = self.root / "shadow_audit_lock.json"
         if audit_lock.is_file():
             remaining = [
@@ -558,6 +571,7 @@ class FactoryRun:
                     continue
                 print(f"\n[{generation+1}/{self.cfg.generations}] "
                       f"Trying {candidate.name}: {candidate.record()}", flush=True)
+                self._progress("screening", candidate, generation=generation)
                 t0 = perf_counter()
                 # Stage A: cheap untuned screen on FIRST earlier tuning fold.
                 baseline_params = dict(XGB_TUNED)
@@ -583,7 +597,9 @@ class FactoryRun:
                     print("  Skipped Optuna: poor cheap screen", flush=True)
                     continue
                 # Stage B: strict earlier-fold Optuna tuning of survivors.
+                self._progress("optuna_tuning", candidate, generation=generation)
                 params, tuned_score = self._tune(candidate)
+                self._progress("selection_predictions", candidate, generation=generation)
                 prediction = self._assembled(
                     candidate, self.cfg.selection_months, params,
                     stage="selection",
@@ -641,11 +657,13 @@ class FactoryRun:
                         "candidate": candidate.record(), "parameters": params,
                         "admitted_alpha": alpha,
                     })
+                self._progress("checkpointing", candidate, generation=generation)
                 # Atomic roster commit BEFORE potentially slow model snapshot
                 # serialization. On restart, a missing snapshot is recovered
                 # from this already-committed member/configuration.
                 self._commit_candidate(roster, record)
                 if accept and self.cfg.save_accepted_snapshots:
+                    self._progress("saving_member", candidate, generation=generation)
                     self._save_member(candidate, params)
                 self.fold_features.clear()  # avoid accumulating 1k-BoW matrices
                 print(f"  {'ADMIT' if accept else 'reject'} "
@@ -676,6 +694,11 @@ class FactoryRun:
         # Do not destroy a previous audit summary during harmless resume.
         if not audit_lock.is_file():
             write_json(summary_path, outcome)
+        self._progress(
+            "selection_complete",
+            processed_count=len(roster["processed"]),
+            accepted_members=len(roster["members"]),
+        )
         print("\nAutoML ensemble selection:", selection_score, flush=True)
         print(
             "Shadow audit is LOCKED." if audit_lock.is_file() else
@@ -746,6 +769,10 @@ class FactoryRun:
                 "audit_months": list(self.cfg.audit_months),
                 "status": "pending",
             })
+        self._progress(
+            "audit_running",
+            accepted_members=len(roster["members"]),
+        )
         weights = {}
         streams = []
         for member in roster["members"]:
@@ -805,6 +832,7 @@ class FactoryRun:
             "audit_months": list(self.cfg.audit_months),
             "status": "complete",
         })
+        self._progress("audit_complete", accepted_members=len(roster["members"]))
         print("Frozen shadow audit:", audit_score, flush=True)
         return selection, results
 
