@@ -110,9 +110,10 @@ def test_factory_resume_and_audit_after_frozen_selection(tmp_path, monkeypatch):
     outcome, events, audit = run.run()
     assert len(events) == 2
     assert outcome["effective_member_weights"]
-    assert audit.month.nunique() == 1
-    assert set(m for _, m, phase in visits if phase == "audit") == {"2025-05"}
-    assert not any(phase == "audit" for _, _, phase in visits[:3])
+    assert audit.month.nunique() == 1  # returned SELECTED fold, not audit
+    assert set(audit.month.unique()) == {"2025-04"}
+    assert not any(phase == "audit" for _, _, phase in visits)
+    assert not (tmp_path / "factory" / "shadow_audit_lock.json").exists()
     assert (tmp_path / "factory" / "roster.json").is_file()
     assert (tmp_path / "factory" / "summary.json").is_file()
     roster = json.loads(
@@ -128,6 +129,16 @@ def test_factory_resume_and_audit_after_frozen_selection(tmp_path, monkeypatch):
     # must never resubmit already processed candidates to Optuna or screening.
     assert len(repeated[1]) == 2
     assert not any(phase == "screen" for _, _, phase in visits[original_visits:])
+    assert not any(phase == "audit" for _, _, phase in visits)
+    # Reveal shadow audit explicitly, and seal the old ensemble roster.
+    audited, audit_preds = FactoryRun(cfg, listings=sales).audit()
+    assert audit_preds.month.unique().tolist() == ["2025-05"]
+    assert "shadow_audit_metrics" in audited
+    assert (tmp_path / "factory" / "shadow_audit_lock.json").is_file()
+    assert FactoryRun(cfg, listings=sales).audit()[0] == audited
+    from dataclasses import replace
+    with pytest.raises(RuntimeError, match="Shadow audit has already"):
+        FactoryRun(replace(cfg, generations=2), listings=sales).run()
     with pytest.raises(ValueError, match="NEW output directory"):
         FactoryRun(
             FactorySettings(**{
