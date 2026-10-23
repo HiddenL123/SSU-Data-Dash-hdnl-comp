@@ -361,20 +361,43 @@ class FactoryRun:
                     "colsample_bytree", .70, 1.0
                 ),
             }
+            # Fold-level score cache is keyed by FULL model hyperparameters.
+            # Failed or interrupted Optuna trials can be re-queued with the
+            # same values. Completed folds are then reused exactly.
+            trial_key = hashlib.sha256(
+                json.dumps(params, sort_keys=True).encode("utf-8")
+            ).hexdigest()[:20]
             scores = []
             for month in self.cfg.tuning_months:
-                # Every trial gets identical chronological folds; the fitted
-                # feature context is reused but XGBoost is always fresh.
-                fold = self._prepare_fold(candidate, month)
-                model = _make_estimator(
-                    {**XGB_TUNED, **params}, self.cfg.trees
+                score_path = (
+                    self.root / "optuna" / "fold_scores" /
+                    candidate.name / trial_key / f"{month}.json"
                 )
-                model.set_params(random_state=candidate.seed)
-                model.fit(fold["X"], fold["y"])
-                prices = np.exp(
-                    fold["offset"] + np.asarray(model.predict(fold["H"]), float)
-                )
-                scores.append(objective(fold["truth"], prices))
+                if score_path.is_file():
+                    stored = json.loads(score_path.read_text(encoding="utf-8"))
+                    score = float(stored["objective"])
+                    if not np.isfinite(score):
+                        raise ValueError(f"Nonfinite saved Optuna fold score: {score_path}")
+                else:
+                    # Historical features are fitted on this fold's eligible
+                    # training sales only, never on current/future outcomes.
+                    fold = self._prepare_fold(candidate, month)
+                    model = _make_estimator(
+                        {**XGB_TUNED, **params}, self.cfg.trees
+                    )
+                    model.set_params(random_state=candidate.seed)
+                    model.fit(fold["X"], fold["y"])
+                    prices = np.exp(
+                        fold["offset"] + np.asarray(model.predict(fold["H"]), float)
+                    )
+                    score = float(objective(fold["truth"], prices))
+                    write_json(score_path, {
+                        "candidate": candidate.name,
+                        "month": str(month),
+                        "parameters": params,
+                        "objective": score,
+                    })
+                scores.append(score)
                 trial.report(float(np.mean(scores)), step=len(scores))
                 if trial.should_prune():
                     raise optuna.TrialPruned()
@@ -389,6 +412,11 @@ class FactoryRun:
                 study.tell(
                     trial.number, state=optuna.trial.TrialState.FAIL
                 )
+                # Rerun the very same hyperparameters, not a newly drawn
+                # trial. Fold scores already written before the interruption
+                # can be reused from the exact-parameter cache above.
+                if trial.params:
+                    study.enqueue_trial(dict(trial.params))
                 print(
                     f"  Recovering interrupted Optuna trial #{trial.number} "
                     f"for {candidate.name}",
