@@ -653,8 +653,11 @@ class FactoryRun:
                         prediction.predicted_price.to_numpy(dtype=float)
                     )
                     if np.std(old_errors) > 0 and np.std(new_errors) > 0:
-                        error_corr = float(
+                        correlation = float(
                             np.corrcoef(old_errors, new_errors)[0, 1]
+                        )
+                        error_corr = (
+                            correlation if np.isfinite(correlation) else None
                         )
                 accept = bool(decision["accept"] and len(weights) < self.cfg.max_members)
                 record = {
