@@ -21,6 +21,9 @@ import numpy as np
 import pandas as pd
 
 import data
+from models.automl_checkpoint import (
+    exclusive_factory_lock, write_json, write_csv,
+)
 from models.automl_search import (
     Candidate, choose_admission, generate_candidates, log_blend,
     metrics, objective, updated_weights,
@@ -131,7 +134,8 @@ class FactoryRun:
         path = self.root / "manifest.json"
         if path.is_file() and json.loads(path.read_text(encoding="utf-8")) != setup:
             raise ValueError("Factory settings/data changed: use a NEW output directory")
-        path.write_text(json.dumps(setup, indent=2)+"\n", encoding="utf-8")
+        if not path.is_file():
+            write_json(path, setup)
         self.fold_features = {}
         self.truth_cache = {}
         events_file = self.root / "events.json"
@@ -239,9 +243,7 @@ class FactoryRun:
                 f"{details_path}"
             )
         details_path.parent.mkdir(parents=True, exist_ok=True)
-        details_path.write_text(
-            json.dumps(provenance, indent=2)+"\n", encoding="utf-8"
-        )
+        write_json(details_path, provenance)
         self.fold_features[key] = fold
         return fold
 
@@ -281,10 +283,10 @@ class FactoryRun:
         metrics(fold["truth"], predicted)  # validate positive finite
         if cache:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            pd.DataFrame({
+            write_csv(dest, pd.DataFrame({
                 "ml_num": fold["ids"], "sold_price": fold["truth"],
                 "predicted_price": predicted,
-            }).to_csv(dest, index=False)
+            }))
         return predicted
 
     def _assembled(self, candidate, months, params, *, stage):
@@ -378,7 +380,27 @@ class FactoryRun:
                     raise optuna.TrialPruned()
             return float(np.mean(scores))
 
-        remaining = max(0, self.cfg.optuna_trials - len(study.trials))
+        # After Ctrl+C or an OS/process kill, Optuna can retain RUNNING
+        # trials in SQLite. Single-writer lock guarantees none are active
+        # here; reclassify orphan trials as interrupted and retry their
+        # budget instead of counting them as completed.
+        for trial in study.trials:
+            if trial.state == optuna.trial.TrialState.RUNNING:
+                study.tell(
+                    trial.number, state=optuna.trial.TrialState.FAIL
+                )
+                print(
+                    f"  Recovering interrupted Optuna trial #{trial.number} "
+                    f"for {candidate.name}",
+                    flush=True,
+                )
+        finished = sum(
+            trial.state in (
+                optuna.trial.TrialState.COMPLETE,
+                optuna.trial.TrialState.PRUNED,
+            ) for trial in study.trials
+        )
+        remaining = max(0, self.cfg.optuna_trials - finished)
         if remaining:
             study.optimize(trial_objective, n_trials=remaining, n_jobs=1)
         complete = [
@@ -428,13 +450,16 @@ class FactoryRun:
         print(f"  Saved fitted member: saved_models/off_market/{name}", flush=True)
 
     def _event(self, event):
+        # events.json is a derived convenience view. The authoritative,
+        # atomically committed decision history lives INSIDE roster.json.
         self.events.append(event)
-        (self.root / "events.json").write_text(
-            json.dumps(self.events, indent=2, default=str)+"\n",
-            encoding="utf-8",
-        )
+        write_json(self.root / "events.json", self.events)
 
     def run(self):
+        with exclusive_factory_lock(self.root):
+            return self._run_locked()
+
+    def _run_locked(self):
         """Run bounded generations and report final fixed-weight shadow audit."""
         roster_path = self.root / "roster.json"
         if roster_path.exists():
@@ -444,7 +469,25 @@ class FactoryRun:
             if roster.get("version") != VERSION:
                 raise ValueError("Old roster version")
         else:
-            roster = {"version": VERSION, "members": [], "processed": []}
+            roster = {
+                "version": VERSION, "members": [], "processed": [],
+                "history": [],
+            }
+            write_json(roster_path, roster)
+        # Old v1 rosters stored events in a separate file. Migrate their
+        # existing decisions only when known, then keep roster history
+        # authoritative. Crash in the legacy gap cannot be fully recovered.
+        if "history" not in roster:
+            historic = [
+                event for event in self.events
+                if event.get("candidate", {}).get("name") in roster["processed"]
+            ]
+            roster["history"] = historic
+            write_json(roster_path, roster)
+        self.events = list(roster["history"])
+        # Repair a crash between the atomic roster commit and rebuilding
+        # events.json. Never reconstruct roster from the weaker events view.
+        write_json(self.root / "events.json", self.events)
         configs, weights, current = {}, {}, None
         # Replay previously admitted members using their frozen parameters,
         # without refitting Optuna. Reuse cached member predictions.
@@ -466,6 +509,15 @@ class FactoryRun:
             weights = updated_weights(
                 weights, candidate.name, member["admitted_alpha"]
             )
+        # If stopped after accepting a candidate but before serializing its
+        # snapshot, rebuild that missing artifact on restart. Completed
+        # members are preserved; only missing models are refitted.
+        if self.cfg.save_accepted_snapshots:
+            for member in roster["members"]:
+                self._save_member(
+                    Candidate(**member["candidate"]),
+                    member["parameters"],
+                )
         processed = set(roster["processed"])
         audit_lock = self.root / "shadow_audit_lock.json"
         if audit_lock.is_file():
@@ -504,12 +556,14 @@ class FactoryRun:
                 t0 = perf_counter()
                 # Stage A: cheap untuned screen on FIRST earlier tuning fold.
                 baseline_params = dict(XGB_TUNED)
-                fold = self._prepare_fold(candidate, self.cfg.tuning_months[0])
                 from_time = self._predict_fold(
                     candidate, self.cfg.tuning_months[0], baseline_params,
                     fold_name="screen",
                 )
-                screen = metrics(fold["truth"], from_time)
+                _, held = self._cohorts(self.cfg.tuning_months[0])
+                screen = metrics(
+                    held.sold_price.to_numpy(dtype=float), from_time
+                )
                 # Cheap catastrophic-model rejection before any Optuna calls.
                 # This is a predefined absolute cutoff, NOT adaptively fitted
                 # to an outer validation or audit result.
@@ -637,6 +691,10 @@ class FactoryRun:
         return outcome, pd.DataFrame(self.events), current
 
     def audit(self):
+        with exclusive_factory_lock(self.root):
+            return self._audit_locked()
+
+    def _audit_locked(self):
         """Open a one-time shadow diagnostic AFTER roster/weights are frozen.
 
         Audit metrics never influence candidate acceptance. Once opened, the
