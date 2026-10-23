@@ -486,8 +486,7 @@ class FactoryRun:
         cutoff = self.cfg.audit_months[0]
         fold = self._prepare_fold(candidate, cutoff)
         # IMPORTANT: fold training history strictly precedes audit first month.
-        model = _make_estimator(params, self.cfg.trees)
-        model.set_params(random_state=candidate.seed)
+        model = self._new_estimator(params, candidate.seed)
         model.fit(fold["X"], fold["y"])
         bundle = FeatureBaggingEnsemble(
             fold["provider"],
