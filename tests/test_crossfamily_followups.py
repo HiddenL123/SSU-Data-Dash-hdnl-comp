@@ -11,7 +11,7 @@ from offmarket_crossfamily_blend import (
 )
 
 
-def test_blend_math_and_exact_pairing():
+def _synthetic_listaware_predictions():
     base = pd.DataFrame({
         "month": ["2025-08", "2025-08", "2025-09"],
         "ml_num": ["10", "20", "30"],
@@ -47,8 +47,12 @@ def test_blend_math_and_exact_pairing():
     return source
 
 
+def test_blend_math_and_exact_pairing():
+    _synthetic_listaware_predictions()
+
+
 def test_misaligned_listaware_source_fails():
-    source = test_blend_math_and_exact_pairing()
+    source = _synthetic_listaware_predictions()
     mismatched = source.copy()
     xgb_mask = mismatched.variant == "xgb_spline_geo"
     mismatched.loc[xgb_mask, "sold_price"] += 100.
@@ -60,7 +64,7 @@ def test_misaligned_listaware_source_fails():
 
 
 def test_scores_only_writes_separate_predictions(tmp_path):
-    source = test_blend_math_and_exact_pairing()
+    source = _synthetic_listaware_predictions()
     result, monthly, by_type, combined = report_followup(
         source, tmp_path, bootstrap_repeats=10
     )
@@ -179,3 +183,26 @@ def test_offmarket_runner_resumes_without_touching_frozen_reference(tmp_path, mo
     pd.testing.assert_frame_equal(a.reset_index(drop=True),b.reset_index(drop=True))
     with pytest.raises(ValueError,match="config changed"):
         run_offmarket_blend(**{**opts,"train_cap":99})
+
+
+def test_fixed_origin_fits_once_across_multiple_months(tmp_path, monkeypatch, sales):
+    import listaware_fixed_origin_followup as follow
+    periods=("2024-07","2024-08")
+    calls=[]
+    def fake_fit(candidate, train, homes, **kwargs):
+        calls.append(candidate.name)
+        assert (train.date_sold < pd.Period(periods[0]).start_time).all()
+        assert "sold_price" not in homes and "date_sold" not in homes
+        # Preserve chronological query order; give all months one fitted model.
+        return homes.list_price.to_numpy(float)*1.02
+    monkeypatch.setattr(follow, "_fit_predict", fake_fit)
+    opts=dict(months=periods,full=False,output_dir=tmp_path/"fixed",
+              threads=1,seed=42,bootstrap_repeats=5,listings=sales)
+    first=follow._run_single_fit_fixed_origin(**opts)
+    assert len(calls)==len(follow.CANDIDATES)
+    assert first.month.nunique()==2
+    second=follow._run_single_fit_fixed_origin(**opts)
+    assert len(calls)==len(follow.CANDIDATES)  # no refits when cached
+    pd.testing.assert_frame_equal(first,second)
+    with pytest.raises(ValueError,match="config changed"):
+        follow._run_single_fit_fixed_origin(**{**opts,"seed":43})
