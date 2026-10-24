@@ -220,6 +220,7 @@
       * List-aware ratio CatBoost remained unchanged at 5.36% MAPE and 4.29% MdAPE.
     * Conclusion: Spatiotemporal comparable-sales features produced a substantial improvement in both mean and median off-market prediction accuracy. Local historical transaction information appears considerably more valuable than the aggregate market features tested so far.
 
+
 **Further Comparable-Sales and Gradient Boosting Experiments**
 
 - E27 — Refined CatBoost Comparable-Sales Model
@@ -326,3 +327,136 @@
     - CatBoost required considerably more training time than LightGBM and XGBoost.
     - The earlier CatBoost Huber model retained the strongest list-aware MdAPE at 4.06%.
   - Conclusion: Hyperparameter optimization substantially improved CatBoost and narrowed its performance gap with the other libraries. However, its additional computational cost did not translate into superior standalone off-market MdAPE. The three tuned boosting libraries achieved similar aggregate performance, with XGBoost leading on off-market MdAPE and LightGBM leading on off-market MAPE.
+
+* E34 — TF-IDF, Binary Bag-of-Words, and Count-Based Text Comparison
+  * Hypothesis: The existing TF-IDF representation may not be optimal for gradient-boosted trees. Binary word-presence features could provide stronger predictive signals than term frequencies or TF-IDF weights.
+  * Test: Compare LightGBM using the existing selected 47-term vocabulary, expanded text vocabularies, and no text features. Evaluate TF-IDF, binary Bag-of-Words, and count-based representations on the same chronological validation cohort.
+  * Observation:
+    * Validation cohort: 6,152 homes.
+    * Selected 47-term binary: MdAPE 8.2996%, MAPE 10.8261%.
+    * Selected 47-term TF-IDF: MdAPE 8.3677%.
+    * Full binary vocabulary: MdAPE 8.4037%.
+    * Full count vocabulary: MdAPE 8.4297%.
+    * Full TF-IDF vocabulary: MdAPE 8.5161%.
+    * No text features: MdAPE 9.2285%.
+  * Conclusion: Textual descriptions provide substantial predictive information. Binary word-presence features outperformed TF-IDF under the tested configuration, while expanding the vocabulary did not improve MdAPE. The 47 selected terms were originally selected using TF-IDF, so additional vocabulary selection specifically for binary encoding may still be worthwhile.
+* E35 — Full Validation of Binary Text Features with XGBoost
+  * Hypothesis: The improvement from binary text encoding observed in LightGBM would also transfer to the tuned XGBoost model.
+  * Test: Replace the existing selected TF-IDF features with binary word-presence features while preserving the tuned XGBoost architecture. Evaluate both prediction tracks using the full December 2025–May 2026 chronological validation period.
+  * Observation:
+    * Validation cohort: 10,069 homes per track.
+    * Off-market: MAPE 10.38%, MdAPE 7.82%, median signed error +0.41%.
+    * List-aware: MAPE 5.20%, MdAPE 4.17%, median signed error +0.51%.
+    * Previous tuned XGBoost off-market MdAPE: 7.87%.
+    * Binary encoding improved off-market MdAPE by approximately 0.05 percentage points.
+  * Conclusion: Binary text representation produced a modest improvement in off-market XGBoost accuracy, making it the preferred representation for subsequent experiments. The gain was small relative to validation uncertainty, so it should not be interpreted as conclusive evidence of superiority in every evaluation period.
+
+**Advanced Spatiotemporal Modelling**
+
+* E36 — Spatiotemporal Splines and Tensor GAM Screening
+  * Hypothesis: Explicit nonlinear interactions between geography and time could improve housing-price predictions beyond the existing comparable-sales and gradient-boosted features. A separate Tensor GAM residual model might also capture remaining spatial and temporal structure.
+  * Test: Compare tuned XGBoost with spatiotemporal spline features against a Tensor GAM residual correction and the existing XGBoost baseline. Use three earlier development months, approximately 40,000 sampled training observations per fold, and 500 boosting trees.
+  * Observation:
+    * Original XGBoost baseline: MdAPE 9.1596%, MAPE 11.8614%.
+    * XGBoost + spatiotemporal splines: MdAPE 8.6045%, MAPE 11.2658%.
+    * XGBoost + Tensor GAM correction: MdAPE 9.1080%, MAPE 11.7474%.
+    * Spatiotemporal splines produced the largest improvement of the tested configurations.
+  * Conclusion: Explicit spatiotemporal spline features provided considerably more benefit than the standalone Tensor GAM residual correction in this development screen. These results justified advancing the spline architecture to full-history validation.
+* E37 — Full-History Spatiotemporal Feature and Residual Comparison
+  * Hypothesis: Combining spatiotemporal splines, geographic-context variables, and model-specific residual correction could improve the strongest XGBoost baseline when trained on the full historical dataset.
+  * Test: Evaluate full-strength, 700-tree XGBoost models on all 10,069 validation homes from December 2025 to May 2026. Compare the baseline against spline features, geographic-context combinations, and Tensor GAM residual corrections calibrated using earlier out-of-time predictions.
+  * Observation:
+    * Original XGBoost baseline:
+      * MdAPE 7.8182%, MAPE 10.3815%.
+    * XGBoost + spatiotemporal splines:
+      * MdAPE 7.5888%, MAPE 10.0193%.
+    * XGBoost + splines + geographic context:
+      * MdAPE 7.5316%, MAPE 10.0577%.
+    * XGBoost + splines + Tensor GAM:
+      * MdAPE 7.5894%, MAPE 9.9855%.
+    * XGBoost + splines + geographic context + Tensor GAM:
+      * MdAPE 7.4857%, MAPE 10.0339%.
+    * The geographic-context and Tensor GAM combination achieved the lowest MdAPE.
+    * Tensor GAM reduced MAPE in some configurations, but its incremental MdAPE gains were not consistently distinguishable from zero under the reported uncertainty intervals.
+  * Conclusion: Spatiotemporal spline features provided a substantial and reproducible improvement over the existing XGBoost baseline. Additional geographic context further improved MdAPE. Tensor GAM provided smaller, less consistent gains, suggesting that much of the useful spatial-temporal structure was already captured by the expanded feature representation. The best observed full-history MdAPE was 7.4857%, making this architecture a strong reference for subsequent ensemble experiments.
+* E38 — GPBoost Structural Spatiotemporal Pilot
+  * Hypothesis: Combining gradient-boosted trees with a Gaussian-process spatial-temporal component could model residual geographical dependence more effectively than feature engineering alone.
+  * Test: Implement a GPBoost pilot with spatial and temporal coordinates, using a Vecchia-approximated Gaussian process. Compare tree-only and tree-plus-Gaussian-process configurations against the tuned XGBoost baseline on a reduced October 2025 development cohort.
+  * Observation:
+    * Pilot cohort: 250 validation homes, approximately 5,000 training observations, and 250 boosting trees for the matched XGBoost reference.
+    * XGBoost reference: MdAPE 10.9349%, MAPE 13.6510%.
+    * GPBoost tree-only: MdAPE 48.7828%, MAPE 72.8239%.
+    * GPBoost combined: MdAPE 48.7828%, MAPE 72.7422%.
+    * The Gaussian-process adjustment did not materially improve the very poor tree-only predictions.
+  * Conclusion: The GPBoost pilot failed to approach the accuracy of the existing XGBoost architecture. Since both GPBoost configurations performed similarly poorly, the result may reflect implementation, objective, target-scaling, or model-configuration problems rather than an inherent limitation of Gaussian processes. Further GPBoost development was deprioritized in favour of more reliable spatial residual methods.
+* E39 — Spatial Matérn and Space-Time Matérn Residual Models
+  * Hypothesis: A separate Matérn-kernel model fitted to historical out-of-time residuals could capture spatial and temporal pricing errors that the XGBoost feature model misses.
+  * Test: Compare spatial Matérn, space-time Matérn, and Tensor GAM corrections against the same XGBoost baseline on an earlier three-month development cohort. Examine whether additional kernel tuning improves accuracy.
+  * Observation:
+    * Validation cohort: approximately 2,700 homes.
+    * XGBoost baseline: MdAPE 10.8761%, MAPE 13.5692%.
+    * Tensor GAM: MdAPE 10.7983%, MAPE 13.4371%.
+    * Spatial Matérn: MdAPE 10.8921%, MAPE 13.4315%.
+    * Space-time Matérn: MdAPE 10.8468%, MAPE 13.5404%.
+    * Additional tuning of the space-time Matérn model produced MdAPE 10.8343%, MAPE 13.8816% in the reported tuning comparison.
+  * Conclusion: Spatial residual correction offered relatively small improvements compared with feature engineering. Tensor GAM achieved the strongest MdAPE in the matched three-month screen, while spatial Matérn achieved slightly lower MAPE. Kernel complexity and additional tuning did not consistently outperform the simpler correction. These methods remained possible ensemble members but did not justify replacing the primary XGBoost model.
+
+**Ensemble Learning and Optimization**
+
+* E40 — Feature and Training-Row Bagging Architecture
+  * Hypothesis: Training multiple XGBoost models on different feature representations and historical training subsets could produce partially independent prediction errors. An ensemble of such models might outperform a single optimized XGBoost configuration.
+  * Test: Develop a feature-bagging and row-bagging system supporting different textual feature subsets, spatiotemporal feature configurations, randomized historical training samples, and reproducible candidate seeds. Introduce independent member predictions and weighted geometric averaging.
+  * Observation:
+    * The framework supports alternative feature selections, training-row samples, and vocabulary masks.
+    * Features and text vocabularies are constructed from eligible historical information only.
+    * Candidate predictions can be saved and reused without retraining successfully completed models.
+    * The initial framework established the infrastructure needed for subsequent automated candidate selection.
+  * Conclusion: Feature and row bagging provided a practical mechanism for generating heterogeneous XGBoost candidates. However, diversity alone does not guarantee improvement, so explicit candidate evaluation and ensemble-admission rules were needed.
+* E41 — Diversity-Aware AutoML Ensemble Pilot
+  * Hypothesis: Automatically selecting candidates based on both prediction accuracy and incremental ensemble improvement would outperform simply combining every available model.
+  * Test: Implement an automated XGBoost ensemble factory using Optuna hyperparameter optimization, candidate generation, cached chronological predictions, and constrained forward ensemble selection. Evaluate an initial computationally reduced experiment before committing to the full training budget.
+  * Observation:
+    * Pilot budget: approximately 5,000 historical training observations and 220 XGBoost trees.
+    * Selection cohort: 500 homes.
+      * Ensemble MdAPE 11.0683%, MAPE 13.9111%.
+    * Shadow-audit cohort: 500 homes.
+      * Ensemble MdAPE 11.2745%, MAPE 14.8734%.
+    * Selected ensemble weights:
+      * `<span>selected_47_splines_geo_reference</span>`: 90%.
+      * `<span>g000_c001</span>`: 10%.
+    * Incremental ensemble-selection gain: approximately 0.0784 percentage points.
+    * Candidate prediction-error correlation: approximately 0.8905.
+  * Conclusion: The AutoML factory successfully identified a complementary candidate that improved the reference model rather than simply accepting every trained member. The relatively small incremental improvement and high error correlation demonstrated the importance of diversity-aware admission. The pilot validated the selection mechanism, but its reduced training budget made its absolute error values unsuitable for direct comparison with the full-history model.
+* E42 — Resumable AutoML Training and Cross-Machine Checkpointing
+  * Hypothesis: Full-history automated ensemble training would be too computationally expensive to require completion in a single uninterrupted session. Persistent checkpoints and interchangeable execution environments would make larger experiments practical.
+  * Test: Add persistent Optuna trial storage, completed-prediction caches, atomic experiment-state updates, interruption recovery, and portable checkpoint archives. Separate the execution configuration into Colab daytime, full-speed local overnight, and reduced-resource local profiles.
+  * Observation:
+    * Completed trials, candidate decisions, ensemble membership, and historical validation predictions are persisted between sessions.
+    * Portable checkpoints include consistent SQLite backups and SHA-256 verification.
+    * Cloud training operates on local Colab runtime storage while writing checkpoint archives to Google Drive.
+    * The cloud and local execution profiles preserve the same model settings, candidate seeds, and chronological evaluation protocol.
+    * During the Colab-to-Windows transfer, the experiment manifest initially detected a different input-data fingerprint. Investigation identified that Windows was loading `<span>listings.csv</span>`, while the cloud configuration could use Parquet.
+    * Additional diagnostics were introduced to identify data, parameter, and model-configuration mismatches without silently modifying the saved experiment.
+  * Conclusion: Checkpointing made extended ensemble optimization and cross-machine recovery operationally feasible. Strict manifest checking is necessary to prevent cached predictions from being reused with incompatible source data or model settings. Computational resource allocation can change between machines without intentionally changing the underlying experiment.
+* E43 — Full-Strength XGBoost AutoML Ensemble and Frozen Shadow Audit
+  * Hypothesis: Applying the automated ensemble-selection process to full-history, 700-tree XGBoost models would yield meaningful improvements over the strongest selected reference model and generalize beyond the months used for candidate selection.
+  * Test: Execute the full-strength ensemble factory with Optuna-tuned candidate configurations, feature and row bagging, and constrained ensemble admission. Use April–May 2025 for tuning, June–July 2025 for ensemble selection, and August–October 2025 for a frozen shadow audit. Fit each monthly model using only eligible earlier historical sales.
+  * Observation:
+    * Initial search configuration: 2 generations, 3 candidates per generation, and 5 Optuna trials per candidate.
+    * Each model used up to 700 boosting trees and the full eligible historical training population.
+    * Frozen audit cohort: 5,951 homes.
+    * First-member reference:
+      * MdAPE 7.5840%.
+      * MAPE 10.0132%.
+      * P90 absolute percentage error 21.3219%.
+    * Selected ensemble:
+      * MdAPE 7.4010%.
+      * MAPE 9.8570%.
+      * P90 absolute percentage error 21.0450%.
+    * Ensemble improvements relative to the first member:
+      * MdAPE decreased by 0.1830 percentage points.
+      * MAPE decreased by 0.1562 percentage points.
+      * P90 absolute percentage error decreased by 0.2768 percentage points.
+    * Relative MdAPE improvement: approximately 2.41%.
+    * Ensemble membership and weights were frozen before opening the shadow audit.
+  * Conclusion: The full-strength AutoML ensemble outperformed its first-member reference on median, mean, and upper-tail percentage error. The consistent direction of improvement provides evidence that complementary candidates contribute useful predictive information beyond the reference model. This established 7.4010% MdAPE as the new observed shadow-audit result. However, the audit covers a different historical period from the previous six-month benchmark, and these development months have been examined during earlier research. A same-period December 2025–May 2026 evaluation remains necessary before claiming an improvement over the previous full-history benchmark.
