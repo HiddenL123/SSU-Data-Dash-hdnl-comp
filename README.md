@@ -40,6 +40,25 @@ On Windows, use `py` if `python` is not found.
 - **`models.py`**: the models. Two simple baselines to beat: list price (list-aware) and the
   10 nearest earlier sales (off-market). `FeatureModel` (gradient-boosted trees) is ready to switch on.
 
+## Experiment notebooks
+
+Two notebooks provide configurable, **non-neural** chronological research runs
+using the existing project scripts, including cached predictions and matched
+MdAPE comparisons:
+
+- [Off-market AVM feature shotgun](notebooks/realworld_avm_shotgun.ipynb):
+  hedonic-adjusted comparables, out-of-time local residuals, robust comparable
+  statistics and multiscale historical geographic features, compared with the
+  frozen ensemble audit on identical homes.
+- [List-aware CatBoost–XGBoost showdown](notebooks/listaware_shotgun.ipynb):
+  the CatBoost Huber baseline, tuned XGBoost/LightGBM, transplanted spatial
+  features and predeclared cross-family blends.
+
+Pilot screens are enabled; full-history training must be explicitly opted into.
+The notebooks work from a checkout in VS Code/Jupyter or Google Colab. The
+frozen off-market audit CSV is stored under `outputs/` (ignored by Git) and
+must be available for the off-market comparison notebook.
+
 ## Validation
 
 `validate` predicts each month from the sales before it, as in the real test. A random split lets
