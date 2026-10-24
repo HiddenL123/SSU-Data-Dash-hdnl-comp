@@ -96,21 +96,23 @@ def _make_estimator(params, screen_trees):
     return XGBRegressor(**kwargs)
 
 
-def _base_features(train, homes):
-    provider = make_features(FEATURE_SET, model="xgboost", track="off_market")
+def _base_features(train, homes, *, feature_set=FEATURE_SET):
+    provider = make_features(feature_set, model="xgboost", track="off_market")
     return provider.fit_transform(train), provider.transform(homes)
 
 
 def _train_and_predict(train, homes, params, screen_trees, *, variant="baseline",
-                       X_train=None, X_homes=None):
+                       X_train=None, X_homes=None, feature_set=FEATURE_SET):
     if variant in COMPARABLE_VARIANTS:
+        if "__st_" in feature_set:
+            raise ValueError("Comparable ablations require base feature sets without __st_ add-ons")
         provider = make_features(
-            FEATURE_SET + COMPARABLE_VARIANTS[variant],
+            feature_set + COMPARABLE_VARIANTS[variant],
             model="xgboost", track="off_market"
         )
         X_train, X_homes = provider.fit_transform(train), provider.transform(homes)
     elif X_train is None or X_homes is None:
-        X_train, X_homes = _base_features(train, homes)
+        X_train, X_homes = _base_features(train, homes, feature_set=feature_set)
     if variant != "baseline" and variant not in COMPARABLE_VARIANTS:
         add = SpaceTimeAddon(variant).fit(train)
         tr = add.transform(train, X_train)
@@ -133,7 +135,7 @@ def _train_and_predict(train, homes, params, screen_trees, *, variant="baseline"
 
 def _calibration_data(sales, *, origin, train_start, train_cap,
                       calibration_cap, calibration_folds, params,
-                      screen_trees, seed):
+                      screen_trees, seed, feature_set=FEATURE_SET):
     """Create prior-fold residuals; each label is out-of-time to its base fit."""
     dates = sales["date_sold"]
     collected, residuals = [], []
@@ -150,7 +152,8 @@ def _calibration_data(sales, *, origin, train_start, train_cap,
         if training.empty or held.empty:
             raise ValueError(f"Insufficient data for calibration month {month}")
         hidden = data.hide_answers(held, "off_market")
-        pred = _train_and_predict(training, hidden, params, screen_trees)
+        pred = _train_and_predict(training, hidden, params, screen_trees,
+                                  feature_set=feature_set)
         log_error = np.log(held["sold_price"].to_numpy(dtype=float)) - np.log(pred)
         # Align rows positionally (indices are retained only for consistency).
         collected.append(hidden)
@@ -165,6 +168,7 @@ def run_shotgun(*, validation_month="2025-10",
                 train_cap=10000, validation_cap=650,
                 calibration_cap=650, calibration_folds=2,
                 screen_trees=220, seed=42, params=None,
+                base_feature_set=FEATURE_SET,
                 features=DEFAULT_SCREEN_FEATURE_VARIANTS, residuals=RESIDUAL_VARIANTS,
                 residual_strength=0.5, output_dir="outputs/spacetime_shotgun",
                 listings=None):
@@ -218,6 +222,7 @@ def run_shotgun(*, validation_month="2025-10",
         "actual_validation_rows": len(validation),
         "calibration_cap": calibration_cap, "calibration_folds": calibration_folds,
         "screen_trees": screen_trees, "seed": seed, "params": params,
+        "base_feature_set": base_feature_set,
         "residual_strength": residual_strength,
         "feature_variants": list(features),
         "residual_variants": list(residuals),
@@ -250,10 +255,12 @@ def run_shotgun(*, validation_month="2025-10",
     print(f"Shotgun: {len(train):,} historical sales; "
           f"{len(homes):,} unseen {origin} homes; "
           f"{screen_trees} trees per XGBoost", flush=True)
-    X_train, X_homes = _base_features(train, homes)
+    X_train, X_homes = _base_features(train, homes,
+                                       feature_set=base_feature_set)
     control_pred = _train_and_predict(
         train, homes, params, screen_trees,
-        X_train=X_train, X_homes=X_homes
+        X_train=X_train, X_homes=X_homes,
+        feature_set=base_feature_set,
     )
     baseline = _metric(prices, control_pred)
     record("feature", "baseline", control_pred, baseline)
@@ -264,7 +271,8 @@ def run_shotgun(*, validation_month="2025-10",
         try:
             estimate = _train_and_predict(
                 train, homes, params, screen_trees, variant=variant,
-                X_train=X_train, X_homes=X_homes
+                X_train=X_train, X_homes=X_homes,
+                feature_set=base_feature_set,
             )
             record("feature", variant, estimate, baseline)
         except Exception as exc:
@@ -278,7 +286,8 @@ def run_shotgun(*, validation_month="2025-10",
                 sales, origin=origin, train_start=tstart,
                 train_cap=train_cap, calibration_cap=calibration_cap,
                 calibration_folds=calibration_folds, params=params,
-                screen_trees=screen_trees, seed=seed
+                screen_trees=screen_trees, seed=seed,
+                feature_set=base_feature_set,
             )
             for variant in residuals:
                 try:
