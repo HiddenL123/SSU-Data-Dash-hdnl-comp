@@ -69,14 +69,15 @@ Defaults:
 - same chronological homes for each research arm within each month;
 - 10,000 training homes per monthly fold, 220 XGBoost trees;
 - 350 test homes per monthly fold;
-- baseline XGBoost + five new variants + two previous controls;
+- matched tuned XGBoost baseline using selected binary text, spatiotemporal splines and geographic context, plus five new variants and three previous controls;
 - output: outputs/realworld_avm_pilot/;
 - the reference is evaluated on **those same exact held-out homes**.
 
 The frozen ensemble is full-history/700-tree, whereas these candidates are
 reduced budget. Differences to the ensemble at this stage are for **context**,
 not valid full-fidelity claims. The appropriate low-cost selection metric is
-the **incremental delta to the matched 220-tree XGBoost baseline**.
+the **incremental delta to the matched 220-tree XGBoost baseline**, which
+already includes splines and geographic context.
 
 Outputs:
 - paired_predictions.csv: both the candidates and the frozen ensemble's
