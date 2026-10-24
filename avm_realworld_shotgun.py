@@ -80,6 +80,9 @@ def _assemble_reference(predictions, ensemble):
         raise ValueError("Reference and research prediction actual prices differ")
     ref["arm"] = "frozen_reference"
     ref["variant"] = "ensemble"
+    if "abs_pct_error" in predictions.columns:
+        ref["abs_pct_error"] = (100 * abs(ref.predicted_price - ref.sold_price)
+                                / ref.sold_price)
     return pd.concat([
         predictions, ref[predictions.columns]
     ], ignore_index=True)
