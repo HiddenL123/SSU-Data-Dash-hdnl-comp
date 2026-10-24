@@ -195,6 +195,33 @@ hash or baseline validation. The frozen checkpoint selection/audit protocol
 remains authoritative; no new candidate generation is triggered by
 `diagnose`.
 
+### Prediction with a listings-only DATA_DIR override
+
+For reproducible checkpoint matching, Windows may have `DATA_DIR` set to
+`data/colab_parquet` (containing only `listings.parquet`). Prediction
+inputs are different files: `test_off_market.parquet` or
+`test_off_market.csv`.
+
+The data loader now resolves prediction-only test files in this order:
+
+1. The test file in `DATA_DIR`, if present.
+2. The test file in the project's normal `data/` directory.
+3. The competition dataset on Hugging Face (cached after download).
+
+The *historical listings file* remains strictly loaded from `DATA_DIR`.
+The experiment fingerprint is never bypassed. In a PowerShell terminal with
+the original `DATA_DIR` still set, an already-finalized model can predict
+without retraining:
+
+```powershell
+py -3.13 ensemble_rc.py predict --submission-file submissions/off_market_v1.csv
+```
+
+This uses the saved fitted ensemble and the prediction test file only;
+no call to Optuna, audit, benchmark, or final refit is required. If
+`off_market_v1.csv` already exists, choose another filename; the CLI
+intentionally refuses overwriting existing submission candidates.
+
 ## 4. Freeze, audit, refit and export
 
 Once generation search is finished, **stop all other workers** and run:
