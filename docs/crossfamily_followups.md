@@ -37,9 +37,9 @@ The real fixed-origin run saves model CSV caches under `outputs/listaware_fixed_
 
 ## 2. Off-market family diversity screen
 
-`offmarket_crossfamily_blend.py` reads the existing frozen XGBoost ensemble's historical `outputs/ensemble_release_candidate_full/shadow_audit_predictions.csv`, then fits *off-market* (no listing price) CatBoost tuned RMSE and LightGBM tuned regression, using the selected-binary/splines/geographic feature stack. Every prediction is scored on an identical home and month as the frozen ensemble. No new XGBoost model is trained; the original frozen audit CSV is never modified.
+`offmarket_crossfamily_blend.py` reads the existing frozen XGBoost ensemble's historical `outputs/ensemble_release_candidate_full/shadow_audit_predictions.csv`, then fits *off-market* (no listing price) tuned standalone XGBoost, CatBoost RMSE and LightGBM regressors on the **same earlier sales**, using selected-binary/splines/geographic features. Predictions are scored on identical homes and months as the frozen ensemble. The existing ensemble is never refitted and its original audit CSV is never modified.
 
-The default pilot uses 25,000 earlier sales, 350 boosting iterations per new model and 350 historical homes per evaluation month. The result is **not compute-matched** against the existing full-sized ensemble and should only decide whether full-strength challengers are worth fitting. The `--full` flag trains using all earlier eligible sales and the full prior tuned CatBoost/LightGBM iteration budgets.
+The default pilot uses 25,000 earlier sales, 350 boosting iterations per standalone model and 350 historical homes per evaluation month. The result is **not compute-matched** against the existing full-sized ensemble and should only decide whether full-strength challengers are worth fitting. The `--full` flag trains using all earlier eligible sales and the full prior tuned CatBoost/LightGBM iteration budgets.
 
 Four **predeclared geometric blends** (weights on log predicted prices) are tested:
 
@@ -57,7 +57,7 @@ py -3.13 offmarket_crossfamily_blend.py
 py -3.13 offmarket_crossfamily_blend.py --full
 ```
 
-The pilot produces `outputs/offmarket_crossfamily_pilot/pooled_scores.csv`, `monthly_scores.csv`, `predictions.csv`, plus per-member/month restartable caches. The frozen ensemble's historical reference is **required**. Its May–October 2025 shadow audit may have been previously inspected and is not independent of earlier model development.
+The new base-XGB pilot produces `outputs/offmarket_base_xgb_pilot/pooled_scores.csv`, `monthly_scores.csv`, `predictions.csv`, plus per-member/month restartable caches. The frozen ensemble's historical reference is **required**. Its May–October 2025 shadow audit may have been previously inspected and is not independent of earlier model development.
 
 ### Standalone XGBoost as the blending base (new follow-up)
 
