@@ -1,12 +1,13 @@
 """Quick, leak-safe OFF-MARKET cross-family blending experiment.
 
 The frozen XGBoost ensemble reference is NEVER retrained or overwritten.
-Fit historical CatBoost and LightGBM off-market regressors on COMPLETED past
-sales, evaluate the SAME home IDs as the frozen 2025 shadow audit, and test
-PREDECLARED geometric mixtures with the frozen ensemble's predictions.
+Fit standalone tuned XGBoost, CatBoost and LightGBM off-market regressors
+on COMPLETED past sales, evaluate the SAME IDs as the frozen 2025 shadow audit,
+and test PREDECLARED geometric blends anchored separately on standalone XGB
+and on the already-frozen ensemble.
 
 For a fast proof of concept:
-  python offmarket_crossfamily_blend.py
+  python offmarket_crossfamily_blend.py --reuse-family-caches outputs/offmarket_crossfamily_pilot
 For all eligible prior training sales with recorded tuned iteration counts:
   python offmarket_crossfamily_blend.py --full
 No list_price, test labels, or in-sample predictions are model features.
@@ -28,12 +29,15 @@ import data
 from models.features import make_features
 from models.listaware_shotgun_specs import CAT_TUNED_RMSE, LGB_TUNED, SPATIAL
 from models.automl_checkpoint import write_csv
-from spacetime_fast import _metric
+from spacetime_fast import XGB_TUNED, _metric
 from spacetime_three_month import _bootstrap_delta
 
 REFERENCE = Path("outputs/ensemble_release_candidate_full/shadow_audit_predictions.csv")
 SOURCE_KEYS = ["month", "ml_num"]
-ARMS = ("frozen_xgb_ensemble", "catboost_offmarket", "lightgbm_offmarket")
+ARMS = (
+    "frozen_xgb_ensemble", "xgboost_offmarket",
+    "catboost_offmarket", "lightgbm_offmarket",
+)
 BLENDS = {
     "frozen_plus_cat_80_20": {"frozen_xgb_ensemble": .80, "catboost_offmarket": .20},
     "frozen_plus_lgb_80_20": {"frozen_xgb_ensemble": .80, "lightgbm_offmarket": .20},
@@ -45,9 +49,28 @@ BLENDS = {
         "frozen_xgb_ensemble": .60, "catboost_offmarket": .25,
         "lightgbm_offmarket": .15,
     },
+    # New hypothesis: mixing base XGBoost with other model families rather
+    # than diluting the already-diversified frozen XGBoost ensemble.
+    "base_xgb_plus_cat_80_20": {
+        "xgboost_offmarket": .80, "catboost_offmarket": .20,
+    },
+    "base_xgb_plus_lgb_80_20": {
+        "xgboost_offmarket": .80, "lightgbm_offmarket": .20,
+    },
+    "base_xgb_cat_lgb_70_20_10": {
+        "xgboost_offmarket": .70, "catboost_offmarket": .20,
+        "lightgbm_offmarket": .10,
+    },
+    "base_xgb_cat_lgb_50_35_15": {
+        "xgboost_offmarket": .50, "catboost_offmarket": .35,
+        "lightgbm_offmarket": .15,
+    },
 }
+for _blend_name, _weights in BLENDS.items():
+    if any(v < 0 for v in _weights.values()) or not np.isclose(sum(_weights.values()), 1):
+        raise ValueError(f"Invalid predeclared blend: {_blend_name}")
 FEATURE_NAME = SPATIAL
-VERSION = 1
+VERSION = 2
 
 
 def _digest(dataframe):
@@ -105,10 +128,16 @@ def _cohort(sales, reference, month, *, max_validation, seed):
 def _model_prediction(train, homes, family, *, full, trees, threads):
     from catboost import CatBoostRegressor
     from lightgbm import LGBMRegressor
+    from xgboost import XGBRegressor
 
-    if family not in ("catboost_offmarket", "lightgbm_offmarket"):
+    backends = {
+        "xgboost_offmarket": "xgboost",
+        "catboost_offmarket": "catboost",
+        "lightgbm_offmarket": "lightgbm",
+    }
+    if family not in backends:
         raise ValueError(f"Unknown new model {family}")
-    backend = "catboost" if family == "catboost_offmarket" else "lightgbm"
+    backend = backends[family]
     provider = make_features(FEATURE_NAME, model=backend, track="off_market")
     X, H = provider.fit_transform(train), provider.transform(homes)
     if (not X.index.equals(train.index) or not H.index.equals(homes.index)
@@ -127,12 +156,21 @@ def _model_prediction(train, homes, family, *, full, trees, threads):
         regressor = CatBoostRegressor(**params)
         cols = X.select_dtypes(include=["object", "string", "category"]).columns.tolist()
         regressor.fit(X, target - offset, cat_features=cols)
-    else:
+    elif backend == "lightgbm":
         params = dict(LGB_TUNED)
         params["n_jobs"] = threads
         if not full:
             params["n_estimators"] = min(int(trees), params["n_estimators"])
         regressor = LGBMRegressor(**params)
+        regressor.fit(X, target - offset)
+    else:
+        params = dict(XGB_TUNED)
+        params["n_jobs"] = threads
+        params["device"] = "cpu"
+        params["enable_categorical"] = True
+        if not full:
+            params["n_estimators"] = min(int(trees), params["n_estimators"])
+        regressor = XGBRegressor(**params)
         regressor.fit(X, target - offset)
     prediction = np.exp(offset + np.asarray(regressor.predict(H), dtype=float).reshape(-1))
     if (prediction.shape != (len(homes),) or not np.isfinite(prediction).all()
@@ -177,6 +215,18 @@ def _compare(predictions, *, repeats=500, seed=42):
     pb = base.predicted_price.to_numpy(float)
     control = _metric(y, pb)
     reference_ape = 100 * np.abs(pb-y)/y
+    standalone = predictions.loc[
+        predictions.variant == "xgboost_offmarket"
+    ].set_index(SOURCE_KEYS).sort_index()
+    if (standalone.empty or not standalone.index.is_unique
+        or not standalone.index.equals(base.index)
+        or not np.allclose(y, standalone.sold_price.to_numpy(float), rtol=0, atol=.0001)):
+        raise ValueError("Missing or misaligned standalone XGBoost baseline")
+    p_xgb = standalone.predicted_price.to_numpy(float)
+    if not np.isfinite(p_xgb).all() or (p_xgb <= 0).any():
+        raise ValueError("Invalid standalone XGBoost baseline")
+    xgb_control = _metric(y, p_xgb)
+    xgb_ape = 100 * np.abs(p_xgb-y)/y
     pooled, monthly = [], []
     for name, frame in predictions.groupby("variant", sort=False):
         if frame.duplicated(SOURCE_KEYS).any() or len(frame) != len(base):
@@ -194,9 +244,15 @@ def _compare(predictions, *, repeats=500, seed=42):
             "delta_mape_pp": score["mape"]-control["mape"],
             "p90_ape": float(np.percentile(ape, 90)),
             "homes_improved_fraction": float(np.mean(ape < reference_ape)),
+            "delta_base_xgb_mdape_pp": score["mdape"]-xgb_control["mdape"],
+            "delta_base_xgb_mape_pp": score["mape"]-xgb_control["mape"],
+            "homes_improved_vs_base_xgb": float(np.mean(ape < xgb_ape)),
         })
         score.update(_bootstrap_delta(reference_ape, ape,
                                      repeats=repeats, seed=seed))
+        xgb_intervals = _bootstrap_delta(xgb_ape, ape,
+                                         repeats=repeats, seed=seed)
+        score.update({f"base_xgb_{key}": val for key, val in xgb_intervals.items()})
         pooled.append(score)
         for month in sorted(predictions.month.unique()):
             ix = aligned.index.get_level_values("month") == month
@@ -206,6 +262,12 @@ def _compare(predictions, *, repeats=500, seed=42):
                 "month": month, "arm": frame.arm.iloc[0], "variant": name,
                 **sub, "delta_mdape_pp": sub["mdape"]-base_sub["mdape"],
                 "delta_mape_pp": sub["mape"]-base_sub["mape"],
+                "delta_base_xgb_mdape_pp": sub["mdape"]-_metric(
+                    y[ix], p_xgb[ix]
+                )["mdape"],
+                "delta_base_xgb_mape_pp": sub["mape"]-_metric(
+                    y[ix], p_xgb[ix]
+                )["mape"],
             })
     return (
         pd.DataFrame(pooled).sort_values(["mdape", "mape"]),
@@ -217,7 +279,7 @@ def run_offmarket_blend(*, full=False, months=("2025-08","2025-09","2025-10"),
                         train_cap=None, validation_cap=None, trees=350,
                         seed=42, threads=4, bootstrap_repeats=500,
                         reference_file=REFERENCE, output_dir=None,
-                        listings=None):
+                        reuse_family_caches=None, listings=None):
     months = tuple(months)
     if not months or len(set(months)) != len(months) or months != tuple(sorted(months)):
         raise ValueError("Require ordered distinct audit months")
@@ -241,8 +303,8 @@ def run_offmarket_blend(*, full=False, months=("2025-08","2025-09","2025-10"),
     sales.date_listed = pd.to_datetime(sales.date_listed)
     if sales.ml_num.astype(str).duplicated().any():
         raise ValueError("Duplicated ml_num in historical sales")
-    folder = Path(output_dir or ("outputs/offmarket_crossfamily_full"
-                                 if full else "outputs/offmarket_crossfamily_pilot"))
+    folder = Path(output_dir or ("outputs/offmarket_base_xgb_full"
+                                 if full else "outputs/offmarket_base_xgb_pilot"))
     folder.mkdir(parents=True, exist_ok=True)
     meta = {
         "version": VERSION, "full": full, "months": months, "train_cap": train_cap,
@@ -263,6 +325,25 @@ def run_offmarket_blend(*, full=False, months=("2025-08","2025-09","2025-10"),
         if any(folder.iterdir()):
             raise ValueError("Refusing to reuse nonempty output folder without manifest")
         manifest.write_text(json.dumps(meta, indent=2)+"\n", encoding="utf-8")
+    # Reuse CatBoost/LightGBM predictions from the PREVIOUS pilot, where
+    # candidate training and the sampled validation homes are identical.
+    # Verify source manifest provenance, not just file existence.
+    previous_folder = Path(reuse_family_caches) if reuse_family_caches else None
+    if previous_folder is not None:
+        old_manifest_path = previous_folder / "manifest.json"
+        if not old_manifest_path.is_file():
+            raise FileNotFoundError(f"Missing previous experiment manifest: {old_manifest_path}")
+        old = json.loads(old_manifest_path.read_text(encoding="utf-8"))
+        fields = (
+            "full", "months", "train_cap", "validation_cap", "trees",
+            "seed", "threads", "features", "data_sha256", "reference_sha256",
+        )
+        mismatched = [key for key in fields if old.get(key) != meta.get(key)]
+        if mismatched:
+            raise ValueError(
+                "Previous family caches do not match the new source/config: "
+                + ", ".join(mismatched)
+            )
     all_frames = []
     periods = sales.date_sold.dt.to_period("M")
     for month in months:
@@ -285,6 +366,17 @@ def run_offmarket_blend(*, full=False, months=("2025-08","2025-09","2025-10"),
         for family in ARMS[1:]:
             path = folder / month / f"{family}.csv"
             saved = _check_saved(path, held, month, family)
+            if (saved is None and previous_folder is not None
+                and family in ("catboost_offmarket", "lightgbm_offmarket")):
+                previous = _check_saved(
+                    previous_folder / month / f"{family}.csv",
+                    held, month, family,
+                )
+                if previous is not None:
+                    saved = previous
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    write_csv(path, saved)
+                    print(f"{month} {family}: reused verified previous pilot predictions", flush=True)
             if saved is None:
                 print(f"{month} {family}: {len(train):,} past training rows; "
                       f"{len(hidden):,} held-out homes", flush=True)
@@ -308,9 +400,10 @@ def run_offmarket_blend(*, full=False, months=("2025-08","2025-09","2025-10"),
     write_csv(folder / "predictions.csv", combined)
     write_csv(folder / "pooled_scores.csv", pooled)
     write_csv(folder / "monthly_scores.csv", monthly)
-    print("\nOff-market blended model comparison (same homes as frozen reference):")
+    print("\nOff-market blended models: changes versus frozen ensemble and standalone XGB:")
     print(pooled[["variant", "homes", "mdape", "mape", "p90_ape",
-                  "delta_mdape_pp", "delta_mape_pp"]].to_string(index=False))
+                  "delta_mdape_pp", "delta_mape_pp",
+                  "delta_base_xgb_mdape_pp", "delta_base_xgb_mape_pp"]].to_string(index=False))
     print(f"Outputs: {folder}", flush=True)
     return pooled, monthly, combined
 
@@ -326,6 +419,7 @@ def main():
     p.add_argument("--validation-cap", type=int)
     p.add_argument("--trees", type=int, default=350)
     p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--reuse-family-caches", type=Path)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--bootstrap-repeats", type=int, default=500)
     args = p.parse_args()
@@ -335,6 +429,7 @@ def main():
         train_cap=args.train_cap, validation_cap=args.validation_cap,
         trees=args.trees, threads=args.threads,
         bootstrap_repeats=args.bootstrap_repeats, seed=args.seed,
+        reuse_family_caches=args.reuse_family_caches,
     )
 
 
