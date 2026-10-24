@@ -40,6 +40,42 @@ On Windows, use `py` if `python` is not found.
 - **`models.py`**: the models. Two simple baselines to beat: list price (list-aware) and the
   10 nearest earlier sales (off-market). `FeatureModel` (gradient-boosted trees) is ready to switch on.
 
+## Follow-up: fixed-origin and cross-family blending
+
+Two **separate, non-neural historical experiments** extend the existing
+showdowns without changing either frozen release model:
+
+- [List-aware fixed-origin and MAE blend notebook](listaware_fixed_origin_followup.ipynb)
+  (`listaware_fixed_origin_followup.py`): train the six shortlisted
+  CatBoost/XGBoost/LightGBM models **once** before August 2025, predict
+  August–October without retraining, and compare the 50/35/15 winner with
+  predeclared CatBoost-MAE blends. Existing full-strength expanding predictions
+  can be analyzed with **zero retraining** using
+  `--from-predictions outputs/listaware_full_shortlist/predictions.csv`.
+- [Off-market frozen ensemble cross-family notebook](offmarket_crossfamily_blend.ipynb)
+  (`offmarket_crossfamily_blend.py`): fit independent off-market CatBoost and
+  LightGBM challengers and compare their geometric mixtures to the existing
+  **read-only** XGBoost ensemble audit, on exactly matching historical homes.
+
+To run tests:
+
+```powershell
+py -3.13 -m pytest tests/test_crossfamily_followups.py -q
+```
+
+Pilot commands:
+
+```powershell
+py -3.13 listaware_fixed_origin_followup.py --pilot
+py -3.13 offmarket_crossfamily_blend.py
+```
+
+Full historical runs are explicitly opt-in via `--full`. These experiments
+use already-inspected 2025 development/audit months and do not constitute new
+holdout tests. See
+[follow-up methodology](docs/crossfamily_followups.md) for matched-cohort
+requirements and result interpretation.
+
 ## Experiment notebooks
 
 Two notebooks provide configurable, **non-neural** chronological research runs
