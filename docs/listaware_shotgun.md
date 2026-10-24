@@ -5,7 +5,9 @@ The list-aware housing model is **separate from** the frozen off-market
 transfer the most successful off-market engineered features into them.
 
 Entry point: `listaware_shotgun.py`; configurations in
-`models/listaware_shotgun_specs.py`.
+`models/listaware_shotgun_specs.py`. For an interactive run with automatically
+rendered leaderboards and diagnostics, open
+[`notebooks/listaware_shotgun.ipynb`](../notebooks/listaware_shotgun.ipynb).
 
 ## Research candidates
 
@@ -45,8 +47,8 @@ Run from the repository root using Python 3.13 and the same `DATA_DIR` as
 your previous Parquet experiments:
 
 ```powershell
-git fetch origin
-git switch --track origin/experiment/realworld-avm-shotgun
+git switch main
+git pull origin main
 py -3.13 -m pytest tests/test_realworld_avm_shotgun.py tests/test_listaware_shotgun.py -q
 py -3.13 listaware_shotgun.py
 ```
