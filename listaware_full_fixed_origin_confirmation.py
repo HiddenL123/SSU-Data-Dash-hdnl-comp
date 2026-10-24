@@ -122,22 +122,49 @@ def compare_against_winner(predictions, *, candidates=CONTROLS,
             pd.DataFrame(monthly).sort_values(["month", "mdape"]).reset_index(drop=True))
 
 
-def run(*, output_dir="outputs/listaware_fixed_origin_full", threads=4,
-        bootstrap_repeats=2000, seed=42):
-    from listaware_fixed_origin_followup import run_followup
-
-    root = Path(output_dir)
-    _, _, _, predictions = run_followup(
-        full=True, months=MONTHS, output_dir=root, threads=threads,
-        seed=seed, bootstrap_repeats=bootstrap_repeats,
-    )
-    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+def _verified_full_origin_manifest(root):
+    """Prevent reuse of expanding-origin, pilot, or incompatible predictions."""
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"No fixed-origin manifest at {manifest_path}; "
+            "this is NOT verified full fixed-origin evidence"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    from listaware_fixed_origin_followup import CANDIDATES
     if (manifest.get("full") is not True
         or manifest.get("mode") != "single-fit_fixed_origin"
         or tuple(manifest.get("months", ())) != MONTHS
+        or tuple(manifest.get("candidates", ())) != CANDIDATES
         or manifest.get("train_cutoff_exclusive") != "2025-08-01"
-        or manifest.get("trees") is not None):
+        or manifest.get("train_start") != "1900-01-01"
+        or manifest.get("trees") is not None
+        or manifest.get("train_cap") != 200000
+        or manifest.get("validation_cap") != 100000
+        or not manifest.get("data_sha256")):
         raise ValueError("Refusing to score a pilot or expanding-origin run")
+    return manifest
+
+
+def run(*, output_dir="outputs/listaware_fixed_origin_full", threads=4,
+        bootstrap_repeats=2000, seed=42, from_existing=False):
+    root = Path(output_dir)
+    if from_existing:
+        # This path neither loads the listings dataset nor fits any models.
+        # It is valid ONLY when the original full-strength runner manifest
+        # identifies the exact single-fit fixed-origin configuration.
+        _verified_full_origin_manifest(root)
+        source = root / "fixed_weight_followup" / "followup_predictions.csv"
+        if not source.is_file():
+            raise FileNotFoundError(f"Expected saved follow-up predictions: {source}")
+        predictions = pd.read_csv(source, dtype={"ml_num": str})
+    else:
+        from listaware_fixed_origin_followup import run_followup
+        _, _, _, predictions = run_followup(
+            full=True, months=MONTHS, output_dir=root, threads=threads,
+            seed=seed, bootstrap_repeats=bootstrap_repeats,
+        )
+        _verified_full_origin_manifest(root)
     pooled, monthly = compare_against_winner(
         predictions, repeats=bootstrap_repeats, seed=seed,
     )
@@ -158,9 +185,12 @@ def main():
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--bootstrap-repeats", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--from-existing", action="store_true",
+                        help="Score verified saved full fixed-origin predictions, no training")
     args = parser.parse_args()
     run(output_dir=args.output_dir, threads=args.threads,
-        bootstrap_repeats=args.bootstrap_repeats, seed=args.seed)
+        bootstrap_repeats=args.bootstrap_repeats, seed=args.seed,
+        from_existing=args.from_existing)
 
 
 if __name__ == "__main__":
