@@ -316,10 +316,9 @@ def run_offmarket_blend(*, full=False, months=("2025-08","2025-09","2025-10"),
         "source": "Frozen historical off-market XGBoost ensemble plus new fitted CatBoost/LightGBM",
     }
     manifest = folder / "manifest.json"
+    canonical_meta = json.loads(json.dumps(meta))
     if manifest.exists():
-        if json.loads(manifest.read_text(encoding="utf-8")) != json.loads(
-            json.dumps(meta)
-        ):
+        if json.loads(manifest.read_text(encoding="utf-8")) != canonical_meta:
             raise ValueError("Experiment source/config changed; choose new output directory")
     else:
         if any(folder.iterdir()):
@@ -338,7 +337,7 @@ def run_offmarket_blend(*, full=False, months=("2025-08","2025-09","2025-10"),
             "full", "months", "train_cap", "validation_cap", "trees",
             "seed", "threads", "features", "data_sha256", "reference_sha256",
         )
-        mismatched = [key for key in fields if old.get(key) != meta.get(key)]
+        mismatched = [key for key in fields if old.get(key) != canonical_meta.get(key)]
         if mismatched:
             raise ValueError(
                 "Previous family caches do not match the new source/config: "
