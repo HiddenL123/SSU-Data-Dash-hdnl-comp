@@ -16,11 +16,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from listaware_shotgun import run_listaware_shotgun, summarize, _atomic_csv
+import data
+from listaware_shotgun import (
+    summarize, _atomic_csv, _fit_predict, _frame, _verified_cache,
+    _dataset_signature, _cap, _check_setup,
+)
+from models.listaware_shotgun_specs import CANDIDATES as CANDIDATE_REGISTRY, BLENDS
 
 CANDIDATES = (
     "cat_huber_baseline", "cat_mae", "cat_huber_spline_geo",
@@ -139,6 +145,136 @@ def report_followup(predictions, output_dir, *, bootstrap_repeats=500, seed=42):
     return pooled, monthly, by_type, combined
 
 
+
+def _run_single_fit_fixed_origin(
+    *, months, full, output_dir, threads, seed, bootstrap_repeats,
+    listings=None,
+):
+    """Fit each candidate ONCE at the cutoff, predict every future holdout.
+
+    In contrast with the generic listaware_shotgun fixed-origin runner, which
+    refits deterministically each month, this is a literal fixed fitted model:
+    one estimator / vocabulary per family and common cutoff for all months.
+    It saves candidate predictions on each month so interrupted work resumes.
+    """
+    months = tuple(months)
+    training_cap = 200_000 if full else 10_000
+    held_cap = 100_000 if full else 350
+    iterations = None if full else 300
+    periods = _check_setup(
+        months, CANDIDATES, training_cap, held_cap,
+        700 if full else iterations, full
+    )
+    sales = data.load("listings") if listings is None else listings.copy()
+    sales["date_sold"] = pd.to_datetime(sales.date_sold)
+    sales["date_listed"] = pd.to_datetime(sales.date_listed)
+    if sales.ml_num.astype(str).duplicated().any():
+        raise ValueError("Duplicate sales/listing IDs")
+    if not np.isfinite(sales[["list_price", "sold_price"]].to_numpy(float)).all():
+        raise ValueError("Invalid sale/list prices")
+    if (sales[["list_price", "sold_price"]] <= 0).any().any():
+        raise ValueError("Nonpositive sale/list prices")
+    cutoff = periods[0].start_time
+    train_start = pd.Timestamp("1900-01-01" if full else "2024-01-01")
+    training = sales.loc[(sales.date_sold < cutoff) & (sales.date_sold >= train_start)]
+    train = _cap(training, training_cap, seed)
+    held = []
+    hidden = []
+    for period in periods:
+        actual = _cap(
+            sales.loc[sales.date_sold.dt.to_period("M") == period],
+            held_cap, seed+11
+        )
+        if actual.empty:
+            raise ValueError(f"Empty holdout {period}")
+        masked = data.hide_answers(actual, "list_aware")
+        if "sold_price" in masked or "date_sold" in masked or "list_price" not in masked:
+            raise ValueError("Incorrect label hiding for list-aware test")
+        held.append(actual)
+        hidden.append(masked)
+    if train.empty:
+        raise ValueError("No historical training data before fixed origin")
+    future = pd.concat(hidden)
+    root = Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    spec = {
+        "version": 2, "mode": "single-fit_fixed_origin", "full": full,
+        "months": months, "candidates": CANDIDATES,
+        "train_cutoff_exclusive": str(cutoff.date()),
+        "train_start": str(train_start.date()),
+        "train_cap": training_cap, "validation_cap": held_cap,
+        "trees": iterations, "threads": threads, "seed": seed,
+        "data_sha256": _dataset_signature(sales),
+    }
+    manifest = root / "manifest.json"
+    if manifest.is_file():
+        if json.loads(manifest.read_text(encoding="utf-8")) != json.loads(
+            json.dumps(spec)
+        ):
+            raise ValueError("Fixed-origin source/config changed; use another output folder")
+    else:
+        if any(root.iterdir()):
+            raise ValueError("Output directory is nonempty without a valid manifest")
+        manifest.write_text(json.dumps(spec, indent=2)+"\n", encoding="utf-8")
+
+    forecasts = {}
+    frames = []
+    for name in CANDIDATES:
+        paths = [root / str(period) / "models" / f"{name}.csv" for period in periods]
+        cached = [_verified_cache(path, actual, period, "model", name)
+                  for path, actual, period in zip(paths, held, periods)]
+        if all(c is not None for c in cached):
+            print(f"Fixed-origin {name}: reused all saved months", flush=True)
+            streams = cached
+        else:
+            print(f"Fixed-origin {name}: ONE fit on {len(train):,} earlier sales; "
+                  f"predict {len(future):,} future homes", flush=True)
+            predicted = _fit_predict(
+                CANDIDATE_REGISTRY[name], train, future,
+                tree_cap=iterations, threads=threads,
+                features_cache={},
+            )
+            streams = []
+            i = 0
+            for path, actual, period, previous in zip(paths, held, periods, cached):
+                p = predicted[i:i+len(actual)]
+                i += len(actual)
+                model_frame = _frame(actual, period, "model", name, p)
+                if previous is not None:
+                    if not np.allclose(
+                        previous.predicted_price.to_numpy(float), p,
+                        rtol=1e-6, atol=.01
+                    ):
+                        raise ValueError("Recomputed fixed-origin cache differs")
+                    model_frame = previous
+                else:
+                    _atomic_csv(path, model_frame)
+                streams.append(model_frame)
+            if i != len(predicted):
+                raise ValueError("Fixed-origin future prediction count changed")
+        for period, frame in zip(periods, streams):
+            forecasts[(str(period), name)] = frame.predicted_price.to_numpy(float)
+            frames.append(frame)
+    for name, weights in BLENDS.items():
+        if not set(weights).issubset(CANDIDATES):
+            continue
+        for period, actual in zip(periods, held):
+            geometric = np.exp(sum(
+                weight * np.log(forecasts[str(period), member])
+                for member, weight in weights.items()
+            ) / sum(weights.values()))
+            frames.append(_frame(actual, period, "blend", name, geometric))
+    full_predictions = pd.concat(frames, ignore_index=True)
+    pooled, monthly, by_type = summarize(
+        full_predictions, repeats=bootstrap_repeats, seed=seed
+    )
+    _atomic_csv(root / "predictions.csv", full_predictions)
+    _atomic_csv(root / "pooled_scores.csv", pooled)
+    _atomic_csv(root / "monthly_scores.csv", monthly)
+    _atomic_csv(root / "house_type_scores.csv", by_type)
+    return full_predictions
+
+
 def run_followup(*, full=False, months=("2025-08", "2025-09", "2025-10"),
                  output_dir=None, threads=4, seed=42, bootstrap_repeats=500,
                  from_predictions=None, listings=None):
@@ -155,11 +291,10 @@ def run_followup(*, full=False, months=("2025-08", "2025-09", "2025-10"),
         "outputs/listaware_fixed_origin_full" if full
         else "outputs/listaware_fixed_origin_pilot"
     ))
-    _, _, _, predictions = run_listaware_shotgun(
-        months=tuple(months), candidates=CANDIDATES,
-        full=full, mode="fixed_origin", threads=threads, seed=seed,
-        bootstrap_repeats=bootstrap_repeats, with_blends=True,
-        output_dir=output, listings=listings,
+    predictions = _run_single_fit_fixed_origin(
+        months=tuple(months), full=full, output_dir=output,
+        threads=threads, seed=seed, bootstrap_repeats=bootstrap_repeats,
+        listings=listings,
     )
     return report_followup(
         predictions, output / "fixed_weight_followup",
