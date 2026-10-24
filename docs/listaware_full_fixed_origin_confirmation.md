@@ -10,10 +10,15 @@ From the checkout root in the project environment:
 
 ```powershell
 py -3.13 -m pytest tests/test_listaware_confirmation.py tests/test_crossfamily_followups.py -q
+# If the 5,951-home results already came from --full single-fit fixed origin,
+# DO NOT train again: reuse the existing output files instead.
+py -3.13 listaware_full_fixed_origin_confirmation.py --from-existing
+
+# Only if the full-strength fixed-origin predictions do not yet exist:
 py -3.13 listaware_full_fixed_origin_confirmation.py
 ```
 
-Requires the same listings source as previous experiments. The runner uses
+`--from-existing` reads only the saved predictions and validates the existing `manifest.json` (full=True, single-fit fixed origin, all original candidates, full training/validation caps). It fails rather than accidentally reusing an expanding or pilot result. The normal, training path requires the same listings source as previous experiments. The runner uses
 `data.load("listings")`, and obeys `DATA_DIR` if set. It resumes already
 verified candidate/month prediction CSVs under
 `outputs/listaware_fixed_origin_full/`; it does not replace any frozen
@@ -61,3 +66,7 @@ training budgets, and validation protocol.
 After reviewing these results, separately consider the earlier same-type
 comparable-sale quota, KNN/RBF-Ridge residual corrections and other
 feature experiments; they are intentionally excluded from this confirmation.
+
+## Interpreting the newly supplied 5,951-home table
+
+The same headline is printed by both `--full` and `--from-predictions` in the historical runner. A table alone cannot prove the fitting protocol. Confirm the originating output directory and `manifest.json`: a verified `outputs/listaware_fixed_origin_full/manifest.json` with `"full": true` and `"mode": "single-fit_fixed_origin"` establishes that the earlier result already is the full-strength fixed-origin comparison. In that case **do not retrain**; use `--from-existing` to compute head-to-head paired intervals directly versus CatBoost-MAE/XGB/LGB. The existing summary's confidence intervals are relative to CatBoost Huber, not the prior winner.
