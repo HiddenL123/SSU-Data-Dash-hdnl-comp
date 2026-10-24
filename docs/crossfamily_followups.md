@@ -59,6 +59,49 @@ py -3.13 offmarket_crossfamily_blend.py --full
 
 The pilot produces `outputs/offmarket_crossfamily_pilot/pooled_scores.csv`, `monthly_scores.csv`, `predictions.csv`, plus per-member/month restartable caches. The frozen ensemble's historical reference is **required**. Its May–October 2025 shadow audit may have been previously inspected and is not independent of earlier model development.
 
+### Standalone XGBoost as the blending base (new follow-up)
+
+The first 1,050-home pilot found the frozen ensemble superior to every blend
+with CatBoost/LightGBM. That does **not** resolve whether separately trained
+CatBoost/LightGBM add value to a **single** tuned XGBoost model.
+
+The runner now fits a standalone tuned XGBoost using the **same historical
+training rows, tree cap, feature stack, and evaluation cohort** as its
+CatBoost/LightGBM alternatives. It reports two paired comparisons:
+
+- `delta_base_xgb_mdape_pp` / `delta_base_xgb_mape_pp` and
+  `base_xgb_delta_*_ci_*`: improvement vs **same-budget standalone XGBoost**;
+- `delta_mdape_pp` / `delta_mape_pp` and `delta_*_ci_*`: improvement vs
+  the **frozen full-budget ensemble**.
+
+Additional *predeclared* blends:
+
+| Blend | Standalone XGB | CatBoost | LightGBM |
+| --- | ---: | ---: | ---: |
+| `base_xgb_plus_cat_80_20` | 80% | 20% | 0% |
+| `base_xgb_plus_lgb_80_20` | 80% | 0% | 20% |
+| `base_xgb_cat_lgb_70_20_10` | 70% | 20% | 10% |
+| `base_xgb_cat_lgb_50_35_15` | 50% | 35% | 15% |
+
+To avoid unnecessary retraining, reuse the CatBoost and LightGBM
+predictions from the old 25k-row/350-tree experiment, **only if their
+manifest and exact evaluation homes match**:
+
+```powershell
+py -3.13 offmarket_crossfamily_blend.py --reuse-family-caches outputs/offmarket_crossfamily_pilot
+```
+
+If the older cache is unavailable, omit `--reuse-family-caches`: all three
+single-family challengers will train. The new default output directory is
+`outputs/offmarket_base_xgb_pilot/`, preserving the previous experiment.
+For full-strength history and rounds use
+`py -3.13 offmarket_crossfamily_blend.py --full`, which writes to
+`outputs/offmarket_base_xgb_full/`.
+
+The original `frozen_*` blends remain in the leaderboard as controls.
+**A positive result relative to standalone XGBoost is not, by itself, a win
+over the frozen ensemble.**
+
 ## 3. Guardrails
 
 - Only previous completed sales enter training. Every query's post-sale fields are hidden; off-market additionally excludes list price.
