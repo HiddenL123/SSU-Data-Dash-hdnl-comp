@@ -58,6 +58,10 @@ COMPARABLE_VARIANTS = {
     "comp_both": "__comp_both",
 }
 SCREEN_FEATURE_VARIANTS = (*FEATURE_VARIANTS, *COMPARABLE_VARIANTS)
+# Keep earlier generic shotgun defaults unchanged; new AVM arms are opt-in.
+DEFAULT_SCREEN_FEATURE_VARIANTS = tuple(
+    name for name in SCREEN_FEATURE_VARIANTS if not name.startswith("rw_")
+)
 
 
 
@@ -161,7 +165,7 @@ def run_shotgun(*, validation_month="2025-10",
                 train_cap=10000, validation_cap=650,
                 calibration_cap=650, calibration_folds=2,
                 screen_trees=220, seed=42, params=None,
-                features=SCREEN_FEATURE_VARIANTS, residuals=RESIDUAL_VARIANTS,
+                features=DEFAULT_SCREEN_FEATURE_VARIANTS, residuals=RESIDUAL_VARIANTS,
                 residual_strength=0.5, output_dir="outputs/spacetime_shotgun",
                 listings=None):
     """Run independent feature and residual screens on one development fold."""
@@ -319,7 +323,7 @@ def main():
     parser.add_argument("--calibration-folds", type=int, default=2)
     parser.add_argument("--screen-trees", type=int, default=220)
     parser.add_argument("--features", nargs="+", choices=SCREEN_FEATURE_VARIANTS,
-                        default=list(SCREEN_FEATURE_VARIANTS))
+                        default=list(DEFAULT_SCREEN_FEATURE_VARIANTS))
     parser.add_argument("--residuals", nargs="*", choices=RESIDUAL_VARIANTS,
                         default=list(RESIDUAL_VARIANTS))
     parser.add_argument("--params", type=Path,
