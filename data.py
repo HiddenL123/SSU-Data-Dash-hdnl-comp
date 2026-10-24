@@ -2,7 +2,10 @@
 
 Files in the project's data/ folder are used first. Otherwise, files are downloaded
 once from Hugging Face and kept in a cache on your computer. You can also point
-DATA_DIR at another folder containing the files:
+DATA_DIR at another folder containing the files. Historical "listings" is
+strictly loaded from DATA_DIR when set, so chronological experiment fingerprints
+cannot silently change. Prediction-only test files may fall back to project
+data/ or Hugging Face when absent from DATA_DIR:
 
     macOS / Linux:       DATA_DIR=/path/to/folder python run.py validate
     Windows PowerShell:  $env:DATA_DIR = "C:/path/to/folder"; python run.py validate
@@ -35,17 +38,40 @@ The error from Hugging Face was: {error}
 """
 
 
+def _find_local(folder, stem):
+    """Prefer Parquet over CSV, preserving the original file-selection order."""
+    for ending in (".parquet", ".csv"):
+        path = Path(folder) / (stem + ending)
+        if path.is_file():
+            return path
+    return None
+
+
 def find_file(name):
-    """Return a local data file or download it from Hugging Face if needed."""
+    """Return a data file, keeping historical listings strictly source-pinned.
+
+    DATA_DIR may contain just listings.parquet for reproducible Colab/Windows
+    training. When a prediction-only test file is missing from that override,
+    look in the project's ordinary data/ directory, then the HF dataset cache.
+    This fallback NEVER applies to labelled listings or changes the
+    experiment's training-data fingerprint.
+    """
     stem = FILE_NAMES[name]
     folder = os.environ.get("DATA_DIR")
     data_dir = Path(folder) if folder else LOCAL_DATA_DIR
-    for ending in (".parquet", ".csv"):
-        path = data_dir / (stem + ending)
-        if path.exists():
-            return path
+    selected = _find_local(data_dir, stem)
+    if selected is not None:
+        return selected
     if folder:
-        raise FileNotFoundError(f"DATA_DIR is {folder}, but {stem}.parquet or {stem}.csv is not in it.")
+        if name == "listings":
+            raise FileNotFoundError(
+                f"DATA_DIR is {folder}, but {stem}.parquet or {stem}.csv is not in it."
+            )
+        # Test-only fallback: a listings-only Parquet override must not
+        # prevent inference when test files exist in the normal data folder.
+        selected = _find_local(LOCAL_DATA_DIR, stem)
+        if selected is not None:
+            return selected
 
     from huggingface_hub import hf_hub_download
     try:
