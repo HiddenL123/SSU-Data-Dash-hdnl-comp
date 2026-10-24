@@ -34,10 +34,9 @@ Public sources and motivation:
   https://support.redfin.com/hc/en-us/articles/360018505351-Owner-Estimate
 - Zillow prior AVM workflow, geographic tiling and temporal modeling:
   https://www.zillow.com/news/building-the-neural-zestimate/
-- Literature on nearby residuals:
-  https://papers.ssrn.com/sol3/papers.cfm?abstract_id=488784
-- Literature on hedonic spatial-correction models:
-  https://www.tandfonline.com/doi/abs/10.10835547.2010.12091276
+- Hedonic adjustments and localized residual smoothing are generic statistical
+  modeling hypotheses tested here, not a claimed reconstruction of any
+  proprietary production estimator.
 
 This code is inspired by those disclosures, not a claim to implement their
 proprietary AVMs or prove improved accuracy.
