@@ -202,3 +202,42 @@ def test_interrupted_listaware_run_can_resume_per_model(tmp_path, monkeypatch, s
     assert "blend_cat_baseline_xgb" in p1.variant.tolist()
     with pytest.raises(ValueError, match="NEW output"):
         run_listaware_shotgun(**{**opts, "trees": 11})
+
+
+@pytest.mark.parametrize("name", ["cat_huber_spline_geo", "xgb_spline_geo"])
+def test_real_cross_family_spline_geo_fit_and_predict_with_hidden_homes(sales, name):
+    """Small real fit to catch CatBoost/XGBoost categorical and feature mismatches."""
+    import data
+    period, historical, held = _month_with_homes(sales, 10)
+    train = historical.iloc[-200:].copy()
+    hidden = data.hide_answers(held, "list_aware")
+    prediction = _fit_predict(
+        CANDIDATES[name], train, hidden, tree_cap=8,
+        threads=1, features_cache={}
+    )
+    assert prediction.shape == (len(held),)
+    assert np.isfinite(prediction).all()
+    assert (prediction > 0).all()
+
+
+def test_catboost_and_xgboost_share_engineered_feature_names_but_correct_dtypes(sales):
+    import data
+    from models.features import make_features
+    _, history, held = _month_with_homes(sales, 5)
+    train = history.iloc[-140:].copy()
+    hidden = data.hide_answers(held, "list_aware")
+    for name in ("cat_huber_spline_geo", "xgb_spline_geo"):
+        candidate = CANDIDATES[name]
+        provider = make_features(candidate.feature_name,
+                                 model=candidate.backend, track="list_aware")
+        X = provider.fit_transform(train)
+        H = provider.transform(hidden)
+        assert X.columns.equals(H.columns)
+        assert "log_list_price" in X and "comp_vs_list_log" in X
+        assert any(c.startswith("extra_tensor_") for c in X.columns)
+        assert "sold_price" not in H and "date_sold" not in H
+        assert X.index.equals(train.index) and H.index.equals(hidden.index)
+        if candidate.backend == "catboost":
+            assert H["house_type_name"].dtype == object
+        else:
+            assert isinstance(H["house_type_name"].dtype, pd.CategoricalDtype)
