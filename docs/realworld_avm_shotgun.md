@@ -125,10 +125,12 @@ Prioritize:
 
 No winner should be claimed before actual CSV results are available.
 
-## Next track: quick list-aware replication
+## Next track: quick list-aware replication (implemented)
 
-Once the off-market shotgun has been screened, reuse the separate list-aware
-pipeline rather than adding listing prices to the off-market model.
+The separate, resumable list-aware screen is now in `listaware_shotgun.py`,
+with its full command guide in [`docs/listaware_shotgun.md`](listaware_shotgun.md).
+Run it after inspecting the off-market feature screen, without adding listing
+prices to the off-market model.
 
 Proposed short screen (same chronological months, same homes per model):
 - Current CatBoost Huber **log(sold/list)** baseline (4.06% previously reported).
