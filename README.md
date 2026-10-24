@@ -53,9 +53,10 @@ showdowns without changing either frozen release model:
   can be analyzed with **zero retraining** using
   `--from-predictions outputs/listaware_full_shortlist/predictions.csv`.
 - [Off-market frozen ensemble cross-family notebook](offmarket_crossfamily_blend.ipynb)
-  (`offmarket_crossfamily_blend.py`): fit independent off-market CatBoost and
-  LightGBM challengers and compare their geometric mixtures to the existing
-  **read-only** XGBoost ensemble audit, on exactly matching historical homes.
+  (`offmarket_crossfamily_blend.py`): train tuned standalone XGBoost,
+  CatBoost and LightGBM on the **same earlier sales**, then compare cross-family
+  mixtures against both standalone XGBoost and the unchanged frozen ensemble.
+  Existing CatBoost/LightGBM pilot predictions can be safely reused.
 
 To run tests:
 

@@ -133,6 +133,7 @@ def test_frozen_reference_blend_math():
     })
     frames = []
     for name, p in [("frozen_xgb_ensemble", [101.,201.]),
+                    ("xgboost_offmarket", [102.,198.]),
                     ("catboost_offmarket", [104.,190.]),
                     ("lightgbm_offmarket", [97.,202.])]:
         part = truth.copy()
@@ -148,8 +149,13 @@ def test_frozen_reference_blend_math():
         part["predicted_price"] = p
         frames.append(part)
     pooled, monthly = _compare(pd.concat(frames,ignore_index=True),repeats=10)
-    assert len(pooled)==7
-    assert len(monthly)==7
+    assert len(pooled)==len(BLENDS)+4
+    assert len(monthly)==len(BLENDS)+4
+    assert "delta_base_xgb_mdape_pp" in pooled
+    assert "base_xgb_delta_mdape_ci_low" in pooled
+    assert pooled.loc[
+        pooled.variant=="xgboost_offmarket", "delta_base_xgb_mdape_pp"
+    ].iloc[0]==0
     assert pooled.loc[
         pooled.variant=="frozen_xgb_ensemble","delta_mdape_pp"
     ].iloc[0]==0
@@ -178,7 +184,8 @@ def test_offmarket_runner_resumes_without_touching_frozen_reference(tmp_path, mo
               bootstrap_repeats=5)
     a,_,_=run_offmarket_blend(**opts)
     b,_,_=run_offmarket_blend(**opts)
-    assert len(counter)==2
+    assert len(counter)==3
+    assert "xgboost_offmarket" in counter
     assert ref.read_bytes()==original_bytes
     pd.testing.assert_frame_equal(a.reset_index(drop=True),b.reset_index(drop=True))
     with pytest.raises(ValueError,match="config changed"):
@@ -206,3 +213,86 @@ def test_fixed_origin_fits_once_across_multiple_months(tmp_path, monkeypatch, sa
     pd.testing.assert_frame_equal(first,second)
     with pytest.raises(ValueError,match="config changed"):
         follow._run_single_fit_fixed_origin(**{**opts,"seed":43})
+
+
+def test_base_xgb_results_are_compared_against_two_references():
+    """Cross-family blends may improve base XGB while harming frozen ensemble."""
+    truth = pd.DataFrame({
+        "month": ["2025-08"]*4,
+        "ml_num": ["1","2","3","4"],
+        "sold_price": [100.,200.,300.,400.],
+    })
+    members = {
+        "frozen_xgb_ensemble": [101.,198.,304.,394.],
+        "xgboost_offmarket": [110.,190.,330.,360.],
+        "catboost_offmarket": [90.,215.,285.,440.],
+        "lightgbm_offmarket": [104.,196.,320.,380.],
+    }
+    frames = []
+    for name, preds in members.items():
+        part = truth.copy()
+        part["variant"], part["arm"] = name, "model"
+        part["predicted_price"] = preds
+        frames.append(part)
+    for name, weights in BLENDS.items():
+        part = truth.copy()
+        part["variant"], part["arm"] = name, "blend"
+        part["predicted_price"] = np.exp(sum(
+            weight*np.log(members[family])
+            for family,weight in weights.items()
+        ))
+        frames.append(part)
+    pooled, monthly = _compare(pd.concat(frames,ignore_index=True),repeats=10)
+    assert len(pooled) == len(BLENDS) + 4
+    base_row = pooled.loc[pooled.variant=="xgboost_offmarket"].iloc[0]
+    frozen_row = pooled.loc[pooled.variant=="frozen_xgb_ensemble"].iloc[0]
+    assert base_row.delta_base_xgb_mdape_pp == pytest.approx(0)
+    assert frozen_row.delta_mdape_pp == pytest.approx(0)
+    assert frozen_row.delta_base_xgb_mdape_pp < 0
+    assert all(name in set(pooled.variant) for name in BLENDS)
+    assert not monthly.empty
+
+
+def test_previous_family_caches_reused_for_base_xgb_followup(tmp_path,monkeypatch,sales):
+    """Old pilot Cat/LGB predictions are safe to reuse, leaving only 1 XGB fit."""
+    import offmarket_crossfamily_blend as runner
+    month="2024-08"
+    chosen=sales.loc[sales.date_sold.dt.to_period("M").astype(str)==month]
+    audit=pd.DataFrame({
+        "month":month,"ml_num":chosen.ml_num,
+        "sold_price":chosen.sold_price,
+        "predicted_price":chosen.sold_price*1.02,
+    })
+    ref=tmp_path/"audit.csv"
+    audit.to_csv(ref,index=False)
+    calls=[]
+    def fake_model(train, homes, family, **kwargs):
+        calls.append(family)
+        return np.full(len(homes),float(np.median(train.sold_price)))
+    monkeypatch.setattr(runner,"_model_prediction",fake_model)
+    opts=dict(months=[month],reference_file=ref,listings=sales,
+              train_cap=100,validation_cap=8,trees=6,threads=1,
+              bootstrap_repeats=5)
+    previous_folder=tmp_path/"previous"
+    runner.run_offmarket_blend(**opts,output_dir=previous_folder)
+    assert len(calls)==3
+    # Construct the previous v1 manifest, reflecting the original source
+    # experiment's recipe while keeping the old cache and labels untouched.
+    manifest=previous_folder/"manifest.json"
+    import json
+    source=json.loads(manifest.read_text())
+    source["version"]=1
+    manifest.write_text(json.dumps(source))
+    calls.clear()
+    new_folder=tmp_path/"new"
+    pooled, _, _=runner.run_offmarket_blend(
+        **opts,output_dir=new_folder,reuse_family_caches=previous_folder,
+    )
+    assert calls == ["xgboost_offmarket"]
+    assert (new_folder / month / "catboost_offmarket.csv").is_file()
+    assert "base_xgb_plus_cat_80_20" in pooled.variant.to_list()
+    with pytest.raises(ValueError,match="do not match"):
+        runner.run_offmarket_blend(
+            **{**opts,"train_cap":101},
+            output_dir=tmp_path/"other",reuse_family_caches=previous_folder,
+        )
