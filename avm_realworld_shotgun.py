@@ -31,12 +31,13 @@ from spacetime_three_month import _bootstrap_delta
 DEFAULT_FEATURES = (
     "baseline", "rw_adjusted_comps", "rw_local_residuals",
     "rw_robust_comps", "rw_multiscale_tiles", "rw_combined",
-    "adaptive_comps", "hedonic_index",
+    "adaptive_comps", "hedonic_index", "time_adjusted_comp",
 )
 DEFAULT_REFERENCE = Path(
     "outputs/ensemble_release_candidate_full/shadow_audit_predictions.csv"
 )
-VERSION = 1
+VERSION = 2
+BASE_FEATURE_SET = "Xpt_spatiotemporal__selected_binary__st_spacetime_splines+geo_context"
 KEY = ["month", "ml_num"]
 
 
@@ -193,6 +194,7 @@ def run_realworld_shotgun(
         "train_start": "1900-01-01" if full else "2024-01-01",
         "train_cap": train_cap, "validation_cap": validation_cap,
         "trees": trees, "seed": seed,
+        "base_feature_set": BASE_FEATURE_SET,
         "data_sha256": _fingerprint(dataset),
         "reference_sha256": hashlib.sha256(ref_path.read_bytes()).hexdigest(),
         "development_only": True,
@@ -234,6 +236,7 @@ def run_realworld_shotgun(
                 train_cap=train_cap, validation_cap=validation_cap,
                 screen_trees=trees, seed=seed,
                 params=dict(XGB_TUNED),
+                base_feature_set=BASE_FEATURE_SET,
                 features=features, residuals=(),
                 output_dir=str(sub), listings=dataset,
             )
