@@ -58,3 +58,31 @@ def test_wrong_cohort_rejected():
     preds["month"] = preds.month.replace({"2025-10": "2025-11"})
     with pytest.raises(ValueError, match="Wrong month cohort"):
         compare_against_winner(preds, repeats=5)
+
+
+def test_scores_only_from_verified_full_origin(tmp_path):
+    import json
+    from listaware_fixed_origin_followup import CANDIDATES
+    from listaware_full_fixed_origin_confirmation import run
+
+    manifest = {
+        "full": True, "mode": "single-fit_fixed_origin",
+        "months": list(MONTHS), "candidates": list(CANDIDATES),
+        "train_cutoff_exclusive": "2025-08-01",
+        "train_start": "1900-01-01", "trees": None,
+        "train_cap": 200000, "validation_cap": 100000,
+        "data_sha256": "synthetic-manifest-hash",
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    folder = tmp_path / "fixed_weight_followup"
+    folder.mkdir()
+    _predictions().to_csv(folder / "followup_predictions.csv", index=False)
+    pooled, monthly = run(output_dir=tmp_path, from_existing=True, bootstrap_repeats=10)
+    assert len(pooled) == len(CONTROLS)
+    assert len(monthly) == len(CONTROLS) * len(MONTHS)
+    assert (tmp_path / "confirmation_vs_prior_winner.csv").is_file()
+
+    manifest["full"] = False
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="pilot or expanding"):
+        run(output_dir=tmp_path, from_existing=True, bootstrap_repeats=10)
