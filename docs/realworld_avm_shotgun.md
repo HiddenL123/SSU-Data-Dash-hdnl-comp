@@ -7,7 +7,7 @@ separate list-aware track. **No neural networks; no outside housing data.**
 This is experimental feature research. It does not change the frozen AutoML
 ensemble, overwrite submission files, retune weights or load hidden test labels.
 
-Interactive notebook: [`notebooks/realworld_avm_shotgun.ipynb`](../notebooks/realworld_avm_shotgun.ipynb).
+Interactive notebook: [`realworld_avm_shotgun.ipynb`](../realworld_avm_shotgun.ipynb).
 The notebook offers a pilot, matched-home plots, and an opt-in full-strength shortlist.
 
 ## What is new (and what was already tested)

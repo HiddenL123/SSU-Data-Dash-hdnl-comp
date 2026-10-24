@@ -46,11 +46,11 @@ Two notebooks provide configurable, **non-neural** chronological research runs
 using the existing project scripts, including cached predictions and matched
 MdAPE comparisons:
 
-- [Off-market AVM feature shotgun](notebooks/realworld_avm_shotgun.ipynb):
+- [Off-market AVM feature shotgun](realworld_avm_shotgun.ipynb):
   hedonic-adjusted comparables, out-of-time local residuals, robust comparable
   statistics and multiscale historical geographic features, compared with the
   frozen ensemble audit on identical homes.
-- [List-aware CatBoost–XGBoost showdown](notebooks/listaware_shotgun.ipynb):
+- [List-aware CatBoost–XGBoost showdown](listaware_shotgun.ipynb):
   the CatBoost Huber baseline, tuned XGBoost/LightGBM, transplanted spatial
   features and predeclared cross-family blends.
 
