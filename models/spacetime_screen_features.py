@@ -15,6 +15,7 @@ from sklearn.preprocessing import SplineTransformer, StandardScaler
 from models.market_features import MarketLevelFeatures
 from models.spatiotemporal_features import ComparableSalesFeatures
 from models.spacetime_advanced_features import ADVANCED_FEATURE_VARIANTS, AdvancedSpaceTimeAddon
+from models.realworld_avm_features import VARIANTS as REALWORLD_VARIANTS, RealWorldAVMAddon
 
 FEATURE_VARIANTS = (
     "baseline",
@@ -24,7 +25,7 @@ FEATURE_VARIANTS = (
     "spacetime_rbf",
     "spacetime_splines",
     "combined",
-) + ADVANCED_FEATURE_VARIANTS
+) + ADVANCED_FEATURE_VARIANTS + REALWORLD_VARIANTS
 
 
 def _coords(homes):
@@ -46,6 +47,7 @@ class SpaceTimeAddon:
             raise ValueError(f"Unknown spatiotemporal add-on: {variant}")
         self.variant = variant
         self.advanced = AdvancedSpaceTimeAddon(variant) if variant in ADVANCED_FEATURE_VARIANTS else None
+        self.realworld = RealWorldAVMAddon(variant) if variant in REALWORLD_VARIANTS else None
         self.market = None
         self.comps = {}
         self.scaler = None
@@ -57,6 +59,9 @@ class SpaceTimeAddon:
     def fit(self, train):
         if self.advanced is not None:
             self.advanced.fit(train)
+            return self
+        if self.realworld is not None:
+            self.realworld.fit(train)
             return self
         modes = self._modes()
         if "market" in modes or "time_adjusted_comp" in modes:
@@ -102,6 +107,8 @@ class SpaceTimeAddon:
     def transform(self, homes, base_features):
         if self.advanced is not None:
             return self.advanced.transform(homes, base_features)
+        if self.realworld is not None:
+            return self.realworld.transform(homes, base_features)
         if self.variant == "baseline":
             return pd.DataFrame(index=homes.index)
         if self.column_names_ is None and self.market is None and not self.comps and (
