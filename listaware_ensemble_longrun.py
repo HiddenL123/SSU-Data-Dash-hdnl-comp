@@ -14,7 +14,7 @@ or BoW-bagging factory; those can be added after the friend-run baseline.
   python listaware_ensemble_longrun.py audit
   python listaware_ensemble_longrun.py finalize --model-name selected_longrun
 
-Defaults expect outputs/listaware_pool_confirmation_all from the
+Defaults expect outputs/listaware_pool_confirmation_curated from the
 feature.listaware_pool_screen screen + confirm notebook.
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ from spacetime_fast import _cap
 KEY = ["month", "ml_num"]
 AUDIT_MONTHS = ("2025-08", "2025-09", "2025-10")
 VERSION = 1
-DEFAULT_POOL = Path("outputs/listaware_pool_confirmation_all")
+DEFAULT_POOL = Path("outputs/listaware_pool_confirmation_curated")
 DEFAULT_ROOT = Path("outputs/listaware_ensemble_longrun")
 CUTOFF = pd.Timestamp("2026-06-01")
 
