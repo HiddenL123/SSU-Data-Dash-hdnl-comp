@@ -30,7 +30,7 @@ from models.automl_search import (
 )
 from models.listaware_factory_search import Candidate, generate_candidates
 from models.listaware_shotgun_specs import parameters as listaware_parameters
-from comparisons.listaware_pool_screen import CATALOG as LISTAWARE_CATALOG
+from models.listaware_candidate_pool import CURATED_CATALOG as LISTAWARE_CATALOG
 from models.listaware_factory_snapshot import ListAwareBaggedMember, ListAwareFactoryEnsemble
 from models.ensemble_bagging import (
     BagSpec, build_text_bank, sample_training_rows, select_text_terms,
@@ -38,7 +38,7 @@ from models.ensemble_bagging import (
 from features.features import make_features
 from features.text_features import TextAugmentedFeatures
 from models.save_model import model_info, save_model
-from spacetime_fast import _cap
+from experiments.spacetime_fast import _cap
 
 VERSION = 1
 

@@ -1,1 +1,1 @@
-"""Feature research helpers; run CLIs with python -m comparisons.<module>."""
+"""Individual-model comparisons; run CLIs with python -m comparisons.<module>."""

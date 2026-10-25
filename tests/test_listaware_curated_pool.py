@@ -8,6 +8,7 @@ from comparisons.listaware_pool_screen import (
 )
 from models.listaware_candidate_pool import (
     CURATED, CURATED_BY_FAMILY, CONFIRMATION_ANCHORS, EXTRA_CANDIDATES,
+    CURATED_CATALOG,
 )
 
 
@@ -19,6 +20,11 @@ def test_three_backend_curated_pool_and_registered_compositions():
     assert set(CURATED_BY_FAMILY) == {"catboost", "xgboost", "lightgbm"}
     assert all(len(options) >= 4 for options in CURATED_BY_FAMILY.values())
     assert set(CATALOG) == set(SUITES["all"]).union(SUITES["curated"])
+    assert tuple(CURATED_CATALOG) == CURATED
+    # The independent, minimal factory registry must agree exactly with
+    # the broader optional comparison catalog (family, loss, target, features).
+    for name in CURATED:
+        assert CURATED_CATALOG[name] == CATALOG[name]
     for backend, options in CURATED_BY_FAMILY.items():
         for name in options:
             c = CATALOG[name]
@@ -70,3 +76,14 @@ def test_curated_confirmation_anchors_preserve_each_family_but_not_weights():
             scores.loc[scores.variant != "lgb_advanced"],
             top_k=14, anchors=CONFIRMATION_ANCHORS
         )
+
+
+def test_ensemble_factory_imports_without_legacy_feature_screen():
+    from models.listaware_ensemble_automl_factory import (
+        FactorySettings, LISTAWARE_CATALOG,
+    )
+    assert LISTAWARE_CATALOG is CURATED_CATALOG
+    assert set(LISTAWARE_CATALOG) == set(CURATED)
+    cfg = FactorySettings()
+    assert cfg.tuning_months[-1] < cfg.selection_months[0]
+    assert cfg.selection_months[-1] < cfg.audit_months[0]
