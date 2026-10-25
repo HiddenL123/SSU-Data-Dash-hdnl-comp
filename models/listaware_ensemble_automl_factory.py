@@ -414,50 +414,78 @@ class FactoryRun:
         return candidate
 
     def _tune(self, candidate):
+        """Off-market's resumable Optuna protocol with backend-specific ranges."""
         try:
             import optuna
         except ImportError as exc:
-            raise ImportError(
-                "Install optuna (pip install optuna) to run the AutoML factory"
-            ) from exc
+            raise ImportError("Install optuna (uv run --with optuna ...)") from exc
         folder = self.root / "optuna"
         folder.mkdir(exist_ok=True)
         storage = f"sqlite:///{(folder / 'studies.db').resolve().as_posix()}"
         study = optuna.create_study(
-            study_name=f"factory_v{VERSION}_{candidate.name}",
+            study_name=f"listaware_factory_v{VERSION}_{candidate.name}",
             storage=storage, direction="minimize", load_if_exists=True,
             sampler=optuna.samplers.TPESampler(seed=self.cfg.seed + candidate.seed),
             pruner=optuna.pruners.MedianPruner(n_startup_trials=3),
         )
+        base = self._base_params(candidate)
+        if candidate.family == "catboost":
+            keys = ("depth", "learning_rate", "l2_leaf_reg")
+        elif candidate.family == "xgboost":
+            keys = ("max_depth", "min_child_weight", "learning_rate",
+                    "reg_lambda", "subsample", "colsample_bytree")
+        else:
+            keys = ("max_depth", "num_leaves", "min_child_samples",
+                    "learning_rate", "reg_lambda", "colsample_bytree")
         if not study.trials:
-            study.enqueue_trial({
-                "max_depth": XGB_TUNED["max_depth"],
-                "min_child_weight": XGB_TUNED["min_child_weight"],
-                "learning_rate": XGB_TUNED["learning_rate"],
-                "reg_lambda": XGB_TUNED["reg_lambda"],
-                "subsample": XGB_TUNED["subsample"],
-                "colsample_bytree": XGB_TUNED["colsample_bytree"],
-            })
+            study.enqueue_trial({key: base[key] for key in keys if key in base})
+
         def trial_objective(trial):
-            params = {
-                "max_depth": trial.suggest_int("max_depth", 4, 10),
-                "min_child_weight": trial.suggest_float(
-                    "min_child_weight", 1.0, 35.0
-                ),
-                "learning_rate": trial.suggest_float(
-                    "learning_rate", .03, .16, log=True
-                ),
-                "reg_lambda": trial.suggest_float(
-                    "reg_lambda", 1.0, 50.0, log=True
-                ),
-                "subsample": trial.suggest_float("subsample", .75, 1.0),
-                "colsample_bytree": trial.suggest_float(
-                    "colsample_bytree", .70, 1.0
-                ),
-            }
-            # Fold-level score cache is keyed by FULL model hyperparameters.
-            # Failed or interrupted Optuna trials can be re-queued with the
-            # same values. Completed folds are then reused exactly.
+            if candidate.family == "catboost":
+                changes = {
+                    "depth": trial.suggest_int("depth", 4, 10),
+                    "learning_rate": trial.suggest_float(
+                        "learning_rate", .025, .16, log=True
+                    ),
+                    "l2_leaf_reg": trial.suggest_float(
+                        "l2_leaf_reg", 1., 40., log=True
+                    ),
+                }
+            elif candidate.family == "xgboost":
+                changes = {
+                    "max_depth": trial.suggest_int("max_depth", 4, 10),
+                    "min_child_weight": trial.suggest_float(
+                        "min_child_weight", 1., 35.
+                    ),
+                    "learning_rate": trial.suggest_float(
+                        "learning_rate", .03, .16, log=True
+                    ),
+                    "reg_lambda": trial.suggest_float(
+                        "reg_lambda", 1., 50., log=True
+                    ),
+                    "subsample": trial.suggest_float("subsample", .75, 1.),
+                    "colsample_bytree": trial.suggest_float(
+                        "colsample_bytree", .70, 1.
+                    ),
+                }
+            else:
+                changes = {
+                    "max_depth": trial.suggest_int("max_depth", 4, 10),
+                    "num_leaves": trial.suggest_int("num_leaves", 20, 80),
+                    "min_child_samples": trial.suggest_int(
+                        "min_child_samples", 15, 90
+                    ),
+                    "learning_rate": trial.suggest_float(
+                        "learning_rate", .025, .16, log=True
+                    ),
+                    "reg_lambda": trial.suggest_float(
+                        "reg_lambda", 1., 50., log=True
+                    ),
+                    "colsample_bytree": trial.suggest_float(
+                        "colsample_bytree", .70, 1.
+                    ),
+                }
+            params = {**base, **changes}
             trial_key = hashlib.sha256(
                 json.dumps(params, sort_keys=True).encode("utf-8")
             ).hexdigest()[:20]
@@ -469,25 +497,21 @@ class FactoryRun:
                 )
                 if score_path.is_file():
                     stored = json.loads(score_path.read_text(encoding="utf-8"))
+                    if (stored.get("candidate") != candidate.record() or
+                        stored.get("parameters") != params):
+                        raise ValueError(f"Stale Optuna fold cache: {score_path}")
                     score = float(stored["objective"])
                     if not np.isfinite(score):
-                        raise ValueError(f"Nonfinite saved Optuna fold score: {score_path}")
+                        raise ValueError("Nonfinite cached Optuna score")
                 else:
-                    # Historical features are fitted on this fold's eligible
-                    # training sales only, never on current/future outcomes.
                     fold = self._prepare_fold(candidate, month)
-                    model = self._new_estimator(
-                        {**XGB_TUNED, **params}, candidate.seed
-                    )
-                    model.fit(fold["X"], fold["y"])
-                    prices = np.exp(
-                        fold["offset"] + np.asarray(model.predict(fold["H"]), float)
-                    )
+                    model = self._new_estimator(params, candidate)
+                    self._fit_estimator(model, candidate, fold)
+                    prices = self._reconstruct(fold, model)
                     score = float(objective(fold["truth"], prices))
                     write_json(score_path, {
-                        "candidate": candidate.name,
-                        "month": str(month),
-                        "parameters": params,
+                        "candidate": candidate.record(),
+                        "month": str(month), "parameters": params,
                         "objective": score,
                     })
                     self._backup()
@@ -497,30 +521,16 @@ class FactoryRun:
                     raise optuna.TrialPruned()
             return float(np.mean(scores))
 
-        # After Ctrl+C or an OS/process kill, Optuna can retain RUNNING
-        # trials in SQLite. Single-writer lock guarantees none are active
-        # here; reclassify orphan trials as interrupted and retry their
-        # budget instead of counting them as completed.
+        # Preserve the off-market factory's killed-trial recovery protocol.
         for trial in study.trials:
             if trial.state == optuna.trial.TrialState.RUNNING:
-                study.tell(
-                    trial.number, state=optuna.trial.TrialState.FAIL
-                )
-                # Rerun the very same hyperparameters, not a newly drawn
-                # trial. Fold scores already written before the interruption
-                # can be reused from the exact-parameter cache above.
+                study.tell(trial.number, state=optuna.trial.TrialState.FAIL)
                 if trial.params:
                     study.enqueue_trial(dict(trial.params))
-                print(
-                    f"  Recovering interrupted Optuna trial #{trial.number} "
-                    f"for {candidate.name}",
-                    flush=True,
-                )
+                print(f"Recovering interrupted Optuna trial #{trial.number}", flush=True)
         finished = sum(
-            trial.state in (
-                optuna.trial.TrialState.COMPLETE,
-                optuna.trial.TrialState.PRUNED,
-            ) for trial in study.trials
+            t.state in (optuna.trial.TrialState.COMPLETE,
+                        optuna.trial.TrialState.PRUNED) for t in study.trials
         )
         remaining = max(0, self.cfg.optuna_trials - finished)
         if remaining:
@@ -528,14 +538,11 @@ class FactoryRun:
                 trial_objective, n_trials=remaining, n_jobs=1,
                 callbacks=[lambda study, trial: self._backup()],
             )
-        complete = [
-            trial for trial in study.trials
-            if trial.state == optuna.trial.TrialState.COMPLETE
-        ]
+        complete = [t for t in study.trials
+                    if t.state == optuna.trial.TrialState.COMPLETE]
         if not complete:
-            raise RuntimeError(f"No successful Optuna trial for {candidate.name}")
-        params = {**XGB_TUNED, **study.best_params}
-        return params, float(study.best_value)
+            raise RuntimeError(f"No completed Optuna trials: {candidate.name}")
+        return {**base, **study.best_params}, float(study.best_value)
 
     def _save_member(self, candidate, params):
         """Save refitted individual model at fixed selection cutoff; never audit."""
