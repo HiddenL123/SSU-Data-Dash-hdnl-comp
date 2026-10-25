@@ -228,7 +228,7 @@ def choose_confirmation(pooled, *, top_k=8):
     return tuple(selected)
 
 
-def _read_screen_selection(screen_dir, *, data_hash, top_k):
+def _read_screen_selection(screen_dir, *, data_hash, top_k, expected_suite):
     folder = Path(screen_dir)
     manifest_path = folder / "manifest.json"
     scores_path = folder / "pooled_scores.csv"
@@ -237,6 +237,7 @@ def _read_screen_selection(screen_dir, *, data_hash, top_k):
     record = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (record.get("stage") != "screen" or record.get("version") != VERSION
         or tuple(record.get("months", ())) != SCREEN_MONTHS
+        or record.get("suite") != expected_suite
         or record.get("data_sha256") != data_hash):
         raise ValueError("Screen dataset/protocol mismatch: cannot select candidates")
     scores = pd.read_csv(scores_path)
@@ -347,7 +348,7 @@ def run(*, stage="screen", suite="all", screen_dir=None, output_dir=None,
         if screen_dir is None:
             raise ValueError("Full confirmation requires a completed screen_dir")
         candidates, provenance = _read_screen_selection(
-            screen_dir, data_hash=digest, top_k=top_k
+            screen_dir, data_hash=digest, top_k=top_k, expected_suite=suite
         )
     else:
         candidates = SUITES[suite]
