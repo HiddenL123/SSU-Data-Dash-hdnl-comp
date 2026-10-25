@@ -55,59 +55,62 @@ Optional portable checkpoint export:
 uv run python ensemble_rc.py export --output-dir outputs/offmarket_longrun_20 --checkpoint-archive offmarket_checkpoint.zip
 ```
 
-## B. List-aware individual candidates, ensemble selection and audit
+## B. List-aware: same AutoML factory with three estimator families
 
-The list-aware branch still uses **existing historically tuned CatBoost/XGB/LGB
-hyperparameter sets**, NOT yet a general multi-family Optuna factory or
-text/row bagging search. It *does* fit a large, factorized candidate pool and
-select the actual **ensemble members and marginal weights** using later
-chronological folds.
+**This uses the copied off-market factory architecture** in
+`models/listaware_ensemble_automl_factory.py`, not the old handcrafted
+`listaware_ensemble_longrun.py` selector (removed from this branch).
+
+It includes the off-market workflow's training-only text vocabulary,
+feature bagging (selected/weighted/uniform/full/additional terms), bootstrap
+or 80% row subbagging, family-specific Optuna tuning, marginal-gain
+ensemble admission, full cached/model manifest snapshots, checkpoint ZIP
+export, and a separately locked chronological audit.
+
+Differences from off-market:
+
+- **Target:** `log(sold_price / list_price)`, with sale price reconstructed
+  as `list_price * exp(predicted_log_ratio)`.
+- **Model families:** CatBoost MAE/Huber, XGBoost, LightGBM with their own
+  historical feature recipes and Optuna hyperparameter ranges.
+- **Features:** the [curated pool](docs/listaware_curated_pool.md) of
+  10 CatBoost / 5 XGB / 5 LGB historically screened feature recipes,
+  with independently sampled text vocabulary and row bags.
+- **Storage:** `outputs/listaware_ensemble_factory_v1/` and
+  `saved_models/list_aware/`, separate from off-market.
+- **Protocol:** Apr–May 2025 tuning, Jun–Jul selection, Aug–Oct sealed audit.
+  These were previously inspected elsewhere, so audit is **not untouched**.
+
+For a stronger machine, choose a **new empty output folder** and fix
+the intended number of generations **before starting**:
 
 ```bash
-# First explore a diverse candidate pool; restartable model/month caches.
-uv run python -m feature.listaware_pool_screen --stage screen --suite curated
+# 20 generations * 3 candidate families/recipes per generation, with
+# 5 Optuna trials per surviving candidate and full 700 boosting rounds.
+uv run --with optuna python listaware_factory.py run --generations 20 --threads 16 --output-dir outputs/listaware_longrun_20
 
-# Shortlist using only Mar--May screen, then full-history fit on Jun--Jul.
-# Retain 4 incumbent controls + Cat/XGB/LGB feature anchors, cap at 14.
-uv run python -m feature.listaware_pool_screen --stage confirm --suite curated --top-k 14 --screen-dir outputs/listaware_pool_screen_curated
+uv run --with optuna python listaware_factory.py status --output-dir outputs/listaware_longrun_20
 
-# Greedy admission using Jun--Jul full-strength predictions ONLY.
-uv run python listaware_ensemble_longrun.py select --max-members 8
+# Do not examine audit scores before candidate selection is completely frozen.
+uv run --with optuna python listaware_factory.py audit --generations 20 --threads 16 --output-dir outputs/listaware_longrun_20
 
-# One-way locked Aug--Oct expanding-origin audit after weights frozen.
-uv run python listaware_ensemble_longrun.py audit --threads 8
-
-# Fit exactly the frozen members on all completed pre-Jun-2026 sales and
-# save a portable inference model (not automatically used by run.py).
-uv run python listaware_ensemble_longrun.py finalize --threads 8 --model-name listaware_longrun_8
+uv run --with optuna python listaware_factory.py finalize --generations 20 --threads 16 --output-dir outputs/listaware_longrun_20 --model-name listaware_longrun_20
 ```
 
-The candidate pool follows [the curated recipe rationale](docs/listaware_curated_pool.md).
-The confirmation includes all three model families; final admission is never
-forced for any family when it harms the matched selection objective.
+The first candidate generation seeds **all three families**. Later proposals
+randomly sample family, predeclared recipe, text bag, and row bag. Like
+off-market, every candidate must have positive marginal matched-home
+ensemble gain to be admitted; mere error-correlation diversity is insufficient.
 
-The selection metric is `0.65*MdAPE + 0.35*MAPE`, with a minimum
-0.01-percentage-point marginal improvement and a 0.03-pp MAPE regression
-safeguard. The first seed is CatBoost MAE. Selection is **greedy**, not a
-guarantee of globally optimal ensemble weights. The audit labels do not
-feed back into member admission, and a saved audit lock prevents changing
-the roster without an explicitly new experiment.
+**Execution requirements:** the original off-market factory's manifest,
+resume, and SQLite semantics apply. Use one writer per output folder.
+`--threads` can change between machines, but data fingerprint, settings,
+candidate seeds, and the Python/ML stack should be consistent. Store a
+durable archive and share fitted model bundles separately, never in Git.
 
-All historical evaluation months have already been consulted in the broader
-project. Do not call their scores an untouched or final hidden-test estimate.
-
-### Trained inference artifact
-
-`models.listaware_selected_ensemble.ListAwareSelectedEnsemble` serializes
-fitted feature providers, estimators, and member weights together under
-`saved_models/list_aware/<name>/`. Transfer the model with its metadata and
-dependencies; load **only trusted** joblib files.
-
-The branch includes an unchanged `run.py`, but **`run.py` currently trains
-its legacy default models and does NOT load either selected long-run
-ensemble automatically**. Integrating those artifacts into a final submission
-interface is a separate task; do not confuse this worker's research selection
-with production integration.
+**Important:** `run.py` is unchanged and still uses the legacy default
+models. The fitted list-aware ensemble is a separate joblib bundle until
+a deliberate deployment integration is performed.
 
 ## Review criteria
 
