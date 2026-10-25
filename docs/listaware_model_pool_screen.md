@@ -98,6 +98,7 @@ Outputs:
 - `candidate_catalog.csv` — exact family, target, objective, and feature recipe
 - `{month}/models/{candidate}.csv` — restartable per-home predictions
 - `predictions.csv` — all individual models on identical month/home IDs
+- `error_correlations.csv` — matched-home signed-log-error correlations between every candidate pair, diagnostic only
 - `pooled_scores.csv`, `monthly_scores.csv`, `house_type_scores.csv` —
   within-run paired error tables
 
