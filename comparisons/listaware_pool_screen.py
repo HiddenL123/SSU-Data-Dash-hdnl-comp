@@ -40,7 +40,7 @@ from models.listaware_shotgun_specs import (
 from models.listaware_candidate_pool import (
     EXTRA_CANDIDATES, CURATED, CONFIRMATION_ANCHORS,
 )
-from spacetime_fast import _cap
+from experiments.spacetime_fast import _cap
 
 VERSION = 1
 SCREEN_MONTHS = ("2025-03", "2025-04", "2025-05")
