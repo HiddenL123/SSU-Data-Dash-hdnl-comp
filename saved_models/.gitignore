@@ -1,7 +1,0 @@
-# Local fitted artifacts are often large. Keep all new track-scoped
-# snapshot folders out of Git; retain only the layout sentinels and docs.
-# Already tracked flat legacy snapshots remain unaffected.
-/off_market/*
-!/off_market/.gitkeep
-/list_aware/*
-!/list_aware/.gitkeep
