@@ -545,40 +545,37 @@ class FactoryRun:
         return {**base, **study.best_params}, float(study.best_value)
 
     def _save_member(self, candidate, params):
-        """Save refitted individual model at fixed selection cutoff; never audit."""
-        name = f"factory_v{VERSION}_{candidate.name}"
+        """Optional pre-audit member snapshot with a fitted list-aware provider."""
+        name = f"listaware_factory_v{VERSION}_{candidate.name}"
         try:
-            existing = model_info(name, track="off_market")
+            existing = model_info(name, track="list_aware")
         except FileNotFoundError:
             existing = None
         if existing is not None:
             meta = existing.get("metadata", {})
-            if (json.dumps(meta.get("candidate"), sort_keys=True) !=
-                json.dumps(candidate.record(), sort_keys=True) or
-                meta.get("parameters") != params):
-                raise ValueError("Saved model name already belongs to different configuration")
+            if (meta.get("candidate") != candidate.record()
+                or meta.get("parameters") != params):
+                raise ValueError("Existing snapshot belongs to another model")
             return
         cutoff = self.cfg.audit_months[0]
         fold = self._prepare_fold(candidate, cutoff)
-        # IMPORTANT: fold training history strictly precedes audit first month.
-        model = self._new_estimator(params, candidate.seed)
-        model.fit(fold["X"], fold["y"])
-        bundle = FeatureBaggingEnsemble(
-            fold["provider"],
-            {candidate.name: BaggedMember(
-                name=candidate.name, estimator=model,
-                selected_columns=fold["cols"],
-                target_offset=fold["offset"],
-                terms=fold["terms"], settings=candidate.record()
-            )}
+        model = self._new_estimator(params, candidate)
+        self._fit_estimator(model, candidate, fold)
+        member = ListAwareBaggedMember(
+            name=candidate.name, estimator=model,
+            feature_provider=fold["provider"],
+            selected_columns=fold["cols"], target_offset=fold["offset"],
+            terms=fold["terms"], settings=candidate.record(),
         )
-        save_model(bundle, name, track="off_market", metadata={
+        bundle = ListAwareFactoryEnsemble(
+            {candidate.name: member}, {candidate.name: 1.}
+        )
+        save_model(bundle, name, track="list_aware", metadata={
             "candidate": candidate.record(), "parameters": params,
-            "target": "log(sold_price)", "frozen_as_of": str(cutoff),
-            "source_factory_dir": str(self.root), "model_type": "AutoMLCandidate",
-            "warning": "Development-period model; not full 700-tree production fit",
+            "target": "log(sold/list)", "frozen_as_of": str(cutoff),
+            "source_factory_dir": str(self.root),
+            "warning": "Pre-audit development snapshot, not full-history refit",
         })
-        print(f"  Saved fitted member: saved_models/off_market/{name}", flush=True)
 
     def _progress(self, stage, candidate=None, **details):
         """Small atomic status view, not a second source of truth."""
@@ -843,6 +840,98 @@ class FactoryRun:
         )
         return outcome, pd.DataFrame(self.events), current
 
+    def finalize(self, *, model_name="listaware_factory_selected"):
+        """Refit the frozen accepted roster on full legally eligible history.
+
+        Audit must already have been opened and locked. Each member retains
+        its own training-fitted feature provider and sampled text/row bag.
+        """
+        with exclusive_factory_lock(self.root):
+            lock_path = self.root / "shadow_audit_lock.json"
+            roster_path = self.root / "roster.json"
+            if not lock_path.is_file() or not roster_path.is_file():
+                raise RuntimeError("Complete selection and audit before finalizing")
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            roster = json.loads(roster_path.read_text(encoding="utf-8"))
+            checksum = hashlib.sha256(
+                json.dumps(roster, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            if lock.get("status") != "complete" or lock.get("roster_sha256") != checksum:
+                raise RuntimeError("Audit incomplete or roster changed after audit")
+            cutoff = pd.Timestamp("2026-06-01")
+            train = self.sales.loc[
+                (self.sales.date_sold >= pd.Timestamp(self.cfg.train_start))
+                & (self.sales.date_sold < cutoff)
+            ].copy()
+            if train.empty:
+                raise RuntimeError("No legally eligible completed sales")
+            bank = build_text_bank(
+                train, max_extra_terms=self.cfg.max_extra_terms,
+                min_df=self.cfg.min_df,
+            )
+            members, weights = {}, {}
+            for record in roster["members"]:
+                candidate = Candidate(**record["candidate"])
+                bag = BagSpec(
+                    name=candidate.name, seed=candidate.seed,
+                    text_mode=candidate.text_mode, n_text=candidate.n_text,
+                    selected_weight=candidate.selected_weight,
+                    row_mode=candidate.row_mode,
+                    row_fraction=candidate.row_fraction,
+                )
+                terms = select_text_terms(bank, bag)
+                provider = make_features(
+                    _feature_name(candidate), model=candidate.family,
+                    track="list_aware",
+                )
+                text = _text_provider(provider)
+                if text is None:
+                    raise RuntimeError("Missing fitted full BoW bank")
+                text.terms = tuple(bank)
+                X = provider.fit_transform(train)
+                if not X.index.equals(train.index):
+                    raise ValueError("Fitted provider reordered training rows")
+                text_cols = text.text_feature_names
+                inverse = {term: col for col, term in text_cols.items()}
+                columns = tuple([
+                    *(col for col in X.columns if col not in text_cols),
+                    *(inverse[term] for term in terms),
+                ])
+                sampled = sample_training_rows(len(train), bag)
+                ratio = (np.log(train.sold_price.to_numpy(float))
+                         - np.log(train.list_price.to_numpy(float)))
+                offset = float(np.median(ratio))
+                fold = {
+                    "X": X.iloc[sampled][list(columns)],
+                    "y": ratio[sampled] - offset,
+                }
+                model = self._new_estimator(record["parameters"], candidate)
+                self._fit_estimator(model, candidate, fold)
+                members[candidate.name] = ListAwareBaggedMember(
+                    name=candidate.name, estimator=model,
+                    feature_provider=provider, selected_columns=columns,
+                    target_offset=offset, terms=tuple(terms),
+                    settings=candidate.record(),
+                )
+                weights = updated_weights(
+                    weights, candidate.name, record["admitted_alpha"]
+                )
+                print(f"Full-history member fitted: {candidate.name}", flush=True)
+            package = ListAwareFactoryEnsemble(
+                members, weights, metadata={
+                    "cutoff_exclusive": str(cutoff.date()),
+                    "training_rows": len(train),
+                    "roster_sha256": checksum,
+                    "source_factory_dir": str(self.root),
+                },
+            )
+            location = save_model(
+                package, model_name, track="list_aware",
+                metadata=package.metadata,
+            )
+            print("Saved list-aware model:", location, flush=True)
+            return location
+
     def audit(self):
         with exclusive_factory_lock(self.root):
             return self._audit_locked()
@@ -973,7 +1062,7 @@ class FactoryRun:
         print("Frozen shadow audit:", audit_score, flush=True)
         return selection, results
 
-def run_automl_factory(*, listings=None, **kwargs):
+def run_listaware_factory(*, listings=None, **kwargs):
     """Notebook entry point. Named kwargs are FactorySettings constructor args."""
     runtime_threads = kwargs.pop("runtime_threads", None)
     checkpoint_archive = kwargs.pop("checkpoint_archive", None)
@@ -985,7 +1074,7 @@ def run_automl_factory(*, listings=None, **kwargs):
 
 
 
-def run_automl_shadow_audit(*, listings=None, **kwargs):
+def run_listaware_shadow_audit(*, listings=None, **kwargs):
     """Opt-in one-time audit of a previously frozen factory selection."""
     runtime_threads = kwargs.pop("runtime_threads", None)
     checkpoint_archive = kwargs.pop("checkpoint_archive", None)
@@ -994,3 +1083,12 @@ def run_automl_shadow_audit(*, listings=None, **kwargs):
         runtime_threads=runtime_threads,
         checkpoint_archive=checkpoint_archive,
     ).audit()
+
+def finalize_listaware_factory(*, listings=None, model_name="listaware_factory_selected", **kwargs):
+    runtime_threads = kwargs.pop("runtime_threads", None)
+    checkpoint_archive = kwargs.pop("checkpoint_archive", None)
+    return FactoryRun(
+        FactorySettings(**kwargs), listings=listings,
+        runtime_threads=runtime_threads,
+        checkpoint_archive=checkpoint_archive,
+    ).finalize(model_name=model_name)
