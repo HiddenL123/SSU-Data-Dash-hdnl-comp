@@ -3,11 +3,12 @@ import pandas as pd
 import pytest
 
 from features.features import make_features
-from feature.listaware_pool_screen import (
+from comparisons.listaware_pool_screen import (
     CATALOG, SEED_REFERENCE, SUITES, choose_confirmation,
 )
 from models.listaware_candidate_pool import (
     CURATED, CURATED_BY_FAMILY, CONFIRMATION_ANCHORS, EXTRA_CANDIDATES,
+    CURATED_CATALOG,
 )
 
 
