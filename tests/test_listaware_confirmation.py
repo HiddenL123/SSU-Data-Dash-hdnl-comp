@@ -2,7 +2,7 @@
 import pandas as pd
 import pytest
 
-from listaware_full_fixed_origin_confirmation import (
+from experiments.listaware_full_fixed_origin_confirmation import (
     CONTROLS, MONTHS, WINNER, compare_against_winner,
 )
 
@@ -62,8 +62,8 @@ def test_wrong_cohort_rejected():
 
 def test_scores_only_from_verified_full_origin(tmp_path):
     import json
-    from listaware_fixed_origin_followup import CANDIDATES
-    from listaware_full_fixed_origin_confirmation import run
+    from experiments.listaware_fixed_origin_followup import CANDIDATES
+    from experiments.listaware_full_fixed_origin_confirmation import run
 
     manifest = {
         "full": True, "mode": "single-fit_fixed_origin",

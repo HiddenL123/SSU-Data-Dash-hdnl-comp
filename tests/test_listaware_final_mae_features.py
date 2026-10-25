@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature.listaware_final_mae_features import (
+from features.listaware_final_mae_features import (
     BASE_WEIGHTS, CHALLENGERS, MONTHS, REPLACEMENTS, WINNER,
     _prepare_manifest, _verified_original_predictions, replacement_blends,
 )
@@ -80,7 +80,7 @@ def test_missing_changed_or_duplicate_member_is_rejected():
 
 
 def test_frozen_original_cohort_matching():
-    from listaware_full_fixed_origin_confirmation import CONTROLS
+    from experiments.listaware_full_fixed_origin_confirmation import CONTROLS
     original = make_predictions().loc[lambda x: ~x.variant.isin(CHALLENGERS)]
     # Original must also contain ALL controls, not just the three blend members.
     expanded = [original]

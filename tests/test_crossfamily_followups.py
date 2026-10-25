@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from listaware_fixed_origin_followup import (
+from experiments.listaware_fixed_origin_followup import (
     ADDITIONAL_BLENDS, append_blends, report_followup,
 )
 from offmarket_crossfamily_blend import (
@@ -193,7 +193,7 @@ def test_offmarket_runner_resumes_without_touching_frozen_reference(tmp_path, mo
 
 
 def test_fixed_origin_fits_once_across_multiple_months(tmp_path, monkeypatch, sales):
-    import listaware_fixed_origin_followup as follow
+    import experiments.listaware_fixed_origin_followup as follow
     periods=("2024-07","2024-08")
     calls=[]
     def fake_fit(candidate, train, homes, **kwargs):

@@ -7,7 +7,7 @@ import data
 from models.boost_regressor import XGBoostRegressor, CatBoostRegressor
 from models.direct_listing import DirectListingModel
 from features.features import make_features
-from spacetime_list_aware_gam import compare_list_aware_spline_gam
+from models.spacetime_list_aware_gam import compare_list_aware_spline_gam
 from test_starter import make_listings
 
 
@@ -83,7 +83,7 @@ def test_spatial_feature_provider_for_list_aware(suffix):
 
 
 def test_full_list_aware_experiment_and_resume(tmp_path, monkeypatch):
-    import spacetime_list_aware_gam as runner
+    import models.spacetime_list_aware_gam as runner
     sales = _sales()
     months = ("2025-12", "2026-01")
     baseline, models, cats = _reference(sales, months)

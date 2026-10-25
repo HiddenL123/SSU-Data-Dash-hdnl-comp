@@ -29,8 +29,8 @@ from features.features import make_features
 from models.listaware_shotgun_specs import (
     BLENDS, CANDIDATES, DEFAULT_CANDIDATES, parameters,
 )
-from spacetime_fast import _cap, _metric
-from spacetime_three_month import _bootstrap_delta
+from experiments.spacetime_fast import _cap, _metric
+from experiments.spacetime_three_month import _bootstrap_delta
 
 VERSION = 1
 KEY = ["month", "ml_num"]

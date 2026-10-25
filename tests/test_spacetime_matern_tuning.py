@@ -5,7 +5,7 @@ import pytest
 
 from models.spacetime_structural_residuals import matern_gp
 from test_starter import make_listings
-import spacetime_matern_tuning as tuning
+import models.spacetime_matern_tuning as tuning
 
 
 def test_matern_screen_defaults_preserved_and_scale_parameters():

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from models.defaults import DEFAULT_PARAMS
-from spacetime_fast import XGB_TUNED
+from experiments.spacetime_fast import XGB_TUNED
 
 BASIC = "Xpt_spatiotemporal"
 BINARY = BASIC + "__selected_binary"

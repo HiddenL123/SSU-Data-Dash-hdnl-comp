@@ -131,7 +131,7 @@ def _verified_full_origin_manifest(root):
             "this is NOT verified full fixed-origin evidence"
         )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    from listaware_fixed_origin_followup import CANDIDATES
+    from experiments.listaware_fixed_origin_followup import CANDIDATES
     if (manifest.get("full") is not True
         or manifest.get("mode") != "single-fit_fixed_origin"
         or tuple(manifest.get("months", ())) != MONTHS
@@ -159,7 +159,7 @@ def run(*, output_dir="outputs/listaware_fixed_origin_full", threads=4,
             raise FileNotFoundError(f"Expected saved follow-up predictions: {source}")
         predictions = pd.read_csv(source, dtype={"ml_num": str})
     else:
-        from listaware_fixed_origin_followup import run_followup
+        from experiments.listaware_fixed_origin_followup import run_followup
         _, _, _, predictions = run_followup(
             full=True, months=MONTHS, output_dir=root, threads=threads,
             seed=seed, bootstrap_repeats=bootstrap_repeats,

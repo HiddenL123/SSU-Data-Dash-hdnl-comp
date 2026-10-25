@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 import data
-from spacetime_fast import XGB_TUNED, run_shotgun
+from experiments.spacetime_fast import XGB_TUNED, run_shotgun
 
 MONTHS = ("2025-09", "2025-10", "2025-11")
 FEATURES = ("baseline", "comp_type_quota", "comp_age_first", "comp_both")
@@ -222,7 +222,7 @@ def run_three_month(*, months=MONTHS, train_start="2022-01-01",
     if pd.Timestamp(train_start) >= (periods[0] - calibration_folds).start_time:
         raise ValueError("train_start too late for earlier out-of-time calibration folds")
 
-    from spacetime_fast import SCREEN_FEATURE_VARIANTS
+    from experiments.spacetime_fast import SCREEN_FEATURE_VARIANTS
     from models.spacetime_screen_residuals import RESIDUAL_VARIANTS
     if any(v not in SCREEN_FEATURE_VARIANTS for v in features) or any(
         v not in RESIDUAL_VARIANTS for v in residuals

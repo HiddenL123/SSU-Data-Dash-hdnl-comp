@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import feature.listaware_pool_screen as pool
+import comparisons.listaware_pool_screen as pool
 
 
 @pytest.fixture
@@ -152,7 +152,7 @@ def test_cache_corruption_not_silently_reused(tmp_path, monkeypatch, synthetic_s
 
 
 def test_error_correlations_reject_mismatched_keys_and_preserve_interpretation():
-    from listaware_shotgun import _frame
+    from experiments.listaware_quick_experiment import _frame
 
     held = pd.DataFrame({
         "ml_num": ["a", "b", "c", "d"],

@@ -22,11 +22,11 @@ import pandas as pd
 import data
 from models.model import OffMarketModel
 from models.spacetime_screen_residuals import SpaceTimeResidual
-from spacetime_full_validation import (
+from experiments.spacetime_full_validation import (
     _calibration_snapshot, _check_model, _frame, _jsonable_spec,
     _validate_baseline_reference,
 )
-from spacetime_three_month import _attach_type, _type_summary, _validate_result, summarize
+from experiments.spacetime_three_month import _attach_type, _type_summary, _validate_result, summarize
 
 PIPELINE_VERSION = 1
 BASE_FEATURE = "Xpt_spatiotemporal__selected_binary"

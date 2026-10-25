@@ -36,7 +36,7 @@ from models.ensemble_snapshot import BaggedMember, FeatureBaggingEnsemble
 from features.features import make_features
 from features.text_features import TextAugmentedFeatures
 from models.save_model import model_info, save_model
-from spacetime_fast import XGB_TUNED, _cap, _make_estimator
+from experiments.spacetime_fast import XGB_TUNED, _cap, _make_estimator
 
 VERSION = 1
 

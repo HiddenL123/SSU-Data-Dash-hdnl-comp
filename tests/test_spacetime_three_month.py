@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import spacetime_three_month as target
+import experiments.spacetime_three_month as target
 
 
 def _data():

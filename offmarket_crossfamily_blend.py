@@ -29,8 +29,8 @@ import data
 from features.features import make_features
 from models.listaware_shotgun_specs import CAT_TUNED_RMSE, LGB_TUNED, SPATIAL
 from models.automl_checkpoint import write_csv
-from spacetime_fast import XGB_TUNED, _metric
-from spacetime_three_month import _bootstrap_delta
+from experiments.spacetime_fast import XGB_TUNED, _metric
+from experiments.spacetime_three_month import _bootstrap_delta
 
 REFERENCE = Path("outputs/ensemble_release_candidate_full/shadow_audit_predictions.csv")
 SOURCE_KEYS = ["month", "ml_num"]

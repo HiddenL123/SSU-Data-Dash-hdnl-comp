@@ -23,9 +23,9 @@ import data
 from models.spacetime_structural_residuals import matern_gp
 from models.spacetime_screen_residuals import SpaceTimeResidual
 from features.spacetime_structural_features import SPLINE_GEO_SUFFIX
-from spacetime_fast import XGB_TUNED, _cap
-from feature.spacetime_combination_screen import _predict as predict_xgb
-from spacetime_structural_fast import _cache, _frame, _save, _report
+from experiments.spacetime_fast import XGB_TUNED, _cap
+from comparisons.spacetime_combination_screen import _predict as predict_xgb
+from experiments.spacetime_structural_fast import _cache, _frame, _save, _report
 
 VERSION = 1
 KINDS = ("spatial", "spacetime")

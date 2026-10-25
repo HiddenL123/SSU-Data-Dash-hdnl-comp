@@ -64,7 +64,7 @@ def _fit_member(train, candidate, params, cfg, *, threads):
     rows = sample_training_rows(len(train), spec)
     y = np.log(train.sold_price.to_numpy(dtype=float))
     offset = float(np.median(y))
-    from spacetime_fast import _make_estimator
+    from experiments.spacetime_fast import _make_estimator
     model = _make_estimator(params, cfg.trees)
     model.set_params(n_jobs=int(threads), random_state=candidate.seed)
     model.fit(X.iloc[rows][selected_columns], y[rows] - offset)

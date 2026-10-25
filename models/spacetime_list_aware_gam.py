@@ -23,13 +23,13 @@ import pandas as pd
 import data
 from models.direct_listing import DirectListingModel
 from models.spacetime_screen_residuals import SpaceTimeResidual
-from feature.spacetime_full_feature_comparison import (
+from comparisons.spacetime_full_feature_comparison import (
     _feature_spec, _from_cache, _signature, _write_frame,
 )
-from spacetime_full_validation import (
+from experiments.spacetime_full_validation import (
     _frame, _jsonable_spec, _validate_baseline_reference,
 )
-from spacetime_three_month import (
+from experiments.spacetime_three_month import (
     _attach_type, _bootstrap_delta, _type_summary, _validate_result, summarize,
 )
 

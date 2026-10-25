@@ -10,7 +10,7 @@ import pytest
 import data
 from models.boost_regressor import XGBoostRegressor
 from models.model import OffMarketModel
-from spacetime_full_validation import validate_spacetime_shortlist
+from experiments.spacetime_full_validation import validate_spacetime_shortlist
 from test_starter import make_listings
 
 
@@ -57,7 +57,7 @@ def _make_reference(sales, months, *, fixed_origin=None):
 
 
 def test_expand_shortlist_runs_and_resumes_without_rerunning(tmp_path, monkeypatch):
-    import spacetime_full_validation as module
+    import experiments.spacetime_full_validation as module
 
     sales = _data()
     months = ("2025-12", "2026-01")

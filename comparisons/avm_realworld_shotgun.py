@@ -25,8 +25,8 @@ import pandas as pd
 
 import data
 from features.spacetime_screen_features import FEATURE_VARIANTS
-from spacetime_fast import XGB_TUNED, run_shotgun, _metric
-from spacetime_three_month import _bootstrap_delta
+from experiments.spacetime_fast import XGB_TUNED, run_shotgun, _metric
+from experiments.spacetime_three_month import _bootstrap_delta
 
 DEFAULT_FEATURES = (
     "baseline", "rw_adjusted_comps", "rw_local_residuals",

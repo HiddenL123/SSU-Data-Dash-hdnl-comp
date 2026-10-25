@@ -20,7 +20,7 @@ from features.features import make_features
 from features.text_features import TextAugmentedFeatures
 from models.ensemble_snapshot import BaggedMember, FeatureBaggingEnsemble
 from models.save_model import save_model, model_info, _check_name
-from spacetime_fast import XGB_TUNED, _cap, _make_estimator
+from experiments.spacetime_fast import XGB_TUNED, _cap, _make_estimator
 
 FEATURE_NAME = "Xpt_spatiotemporal__full_binary__st_spacetime_splines+geo_context"
 VERSION = 1

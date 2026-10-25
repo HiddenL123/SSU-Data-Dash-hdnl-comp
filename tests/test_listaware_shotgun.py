@@ -8,7 +8,7 @@ import pytest
 from models.listaware_shotgun_specs import (
     BLENDS, CANDIDATES, DEFAULT_CANDIDATES, ADJUSTED, SPATIAL, parameters,
 )
-from listaware_shotgun import (
+from experiments.listaware_quick_experiment import (
     _check_setup, _fit_predict, _frame, _verified_cache,
     _validate_all, run_listaware_shotgun, summarize,
 )
@@ -91,9 +91,9 @@ def test_log_blend_geometric_mean_is_well_defined_and_weights_frozen():
 
 
 def test_previously_trained_models_never_receive_holdout_labels(monkeypatch, sales):
-    from listaware_shotgun import _fit_predict
+    from experiments.listaware_quick_experiment import _fit_predict
     from models.listaware_shotgun_specs import Candidate
-    import listaware_shotgun as mod
+    import experiments.listaware_quick_experiment as mod
     period, history, hold = _month_with_homes(sales, 5)
     hidden = hold.drop(columns=["sold_price", "date_sold"])
     observed = []
@@ -173,7 +173,7 @@ def test_cache_refuses_changed_row_alignment_or_prices(tmp_path, sales):
 
 
 def test_interrupted_listaware_run_can_resume_per_model(tmp_path, monkeypatch, sales):
-    import listaware_shotgun as runner
+    import experiments.listaware_quick_experiment as runner
     period, _, _ = _month_with_homes(sales)
     counter = []
     def fake_fit(candidate, train, homes, **kw):

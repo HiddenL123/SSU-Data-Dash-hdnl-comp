@@ -34,7 +34,7 @@ import pandas as pd
 import data
 from models.model import OffMarketModel
 from models.spacetime_screen_residuals import SpaceTimeResidual
-from spacetime_three_month import (
+from experiments.spacetime_three_month import (
     _attach_type, _type_summary, _validate_result, summarize,
 )
 

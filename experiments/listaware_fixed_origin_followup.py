@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 import data
-from listaware_shotgun import (
+from experiments.listaware_quick_experiment import (
     summarize, _atomic_csv, _fit_predict, _frame, _verified_cache,
     _dataset_signature, _cap, _check_setup,
 )

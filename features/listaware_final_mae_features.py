@@ -27,11 +27,11 @@ import numpy as np
 import pandas as pd
 
 import data
-from listaware_shotgun import (
+from experiments.listaware_quick_experiment import (
     _atomic_csv, _dataset_signature, _fit_predict, _frame, _verified_cache,
 )
-from listaware_fixed_origin_followup import ADDITIONAL_BLENDS
-from listaware_full_fixed_origin_confirmation import (
+from experiments.listaware_fixed_origin_followup import ADDITIONAL_BLENDS
+from experiments.listaware_full_fixed_origin_confirmation import (
     CONTROLS, KEY, MONTHS, WINNER, _verified_full_origin_manifest,
     compare_against_winner,
 )

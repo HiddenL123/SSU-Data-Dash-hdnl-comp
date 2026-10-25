@@ -9,7 +9,7 @@ import pytest
 import data
 from models.boost_regressor import XGBoostRegressor
 from models.model import OffMarketModel
-from spacetime_full_gam_comparison import compare_full_spline_gam
+from models.spacetime_full_gam_comparison import compare_full_spline_gam
 from test_starter import make_listings
 
 
@@ -45,7 +45,7 @@ def _dataset():
 
 
 def test_two_full_spline_gam_combinations_and_resume(tmp_path, monkeypatch):
-    import spacetime_full_gam_comparison as runner
+    import models.spacetime_full_gam_comparison as runner
 
     sales = _dataset()
     months = ("2025-12", "2026-01")
@@ -101,7 +101,7 @@ def test_two_full_spline_gam_combinations_and_resume(tmp_path, monkeypatch):
 
 
 def test_calibration_uses_only_prior_sale_months(tmp_path, monkeypatch):
-    import spacetime_full_gam_comparison as runner
+    import models.spacetime_full_gam_comparison as runner
     sales = _dataset()
     months = ("2025-12",)
     reference, models = _reference(sales, months)

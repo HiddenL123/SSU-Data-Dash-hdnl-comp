@@ -10,10 +10,10 @@ import data
 from models.boost_regressor import XGBoostRegressor
 from models.model import OffMarketModel
 from features.features import make_features
-from feature.spacetime_full_feature_comparison import (
+from comparisons.spacetime_full_feature_comparison import (
     compare_full_spacetime_models, _from_cache, _feature_spec,
 )
-from feature.spacetime_combination_screen import run_combination_screen
+from comparisons.spacetime_combination_screen import run_combination_screen
 from test_starter import make_listings
 
 
@@ -63,7 +63,7 @@ def test_opt_in_features_keep_same_inference_schema(suffix):
 def test_full_history_compares_independently_and_resumes(tmp_path, monkeypatch):
     # The old shotgun module may be cached in an existing notebook kernel.
     # Its obsolete registry must not reject variants supported by this runner.
-    import spacetime_fast
+    import experiments.spacetime_fast as spacetime_fast
     monkeypatch.setattr(spacetime_fast, "SCREEN_FEATURE_VARIANTS", ("baseline",))
     sales = _sales()
     months = ("2025-12", "2026-01")
@@ -84,7 +84,7 @@ def test_full_history_compares_independently_and_resumes(tmp_path, monkeypatch):
 
     # All candidates have been cached. Only baseline predictions need to be
     # recomputed; no feature model may be refitted on resume.
-    import feature.spacetime_full_feature_comparison as target
+    import comparisons.spacetime_full_feature_comparison as target
     class Forbidden:
         def __init__(self, *args, **kwargs):
             raise AssertionError("Cached feature candidates must not retrain")
@@ -128,7 +128,7 @@ def test_lightweight_feature_and_spline_gam_combinations(tmp_path):
 
 
 def test_full_cache_rejects_invalid_or_corrupted_candidate(tmp_path):
-    from feature.spacetime_full_feature_comparison import _frame
+    from comparisons.spacetime_full_feature_comparison import _frame
     sales = _sales().head(12)
     path = tmp_path / "prediction.csv"
     frame = _frame(sales, "2025-08", "feature", "spacetime_splines",

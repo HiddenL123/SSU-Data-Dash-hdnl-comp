@@ -74,7 +74,7 @@ def diagnose(root, *, generations=2, use_saved_settings=False):
     import data
     from models.ensemble_automl_factory import FactorySettings, VERSION
     from models.automl_profiles import release_settings
-    from spacetime_fast import XGB_TUNED
+    from experiments.spacetime_fast import XGB_TUNED
 
     root = Path(root)
     manifest_file = root / "manifest.json"

@@ -11,7 +11,7 @@ from features.text_features import (
 from models.boost_regressor import LightGBMRegressor
 from models.model import OffMarketModel
 from models.direct_listing import DirectListingModel
-from feature.text_benchmark import run_benchmark
+from comparisons.text_benchmark import run_benchmark
 from test_starter import make_listings
 
 

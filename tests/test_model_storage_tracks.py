@@ -230,7 +230,7 @@ def test_feature_bagging_pilot_saves_reloadable_offmarket_models(
     held = listings.loc[
         listings.date_sold.dt.to_period("M") == pd.Period("2025-06")
     ]
-    from spacetime_fast import _cap
+    from experiments.spacetime_fast import _cap
     held = _cap(held, 12, 53)
     hidden = data.hide_answers(held, "off_market")
     for spec in specs:

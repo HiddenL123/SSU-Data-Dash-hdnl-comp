@@ -28,8 +28,8 @@ import numpy as np
 import pandas as pd
 
 import data
-from feature.listaware_final_mae_features import CHALLENGERS
-from listaware_shotgun import (
+from features.listaware_final_mae_features import CHALLENGERS
+from experiments.listaware_quick_experiment import (
     _atomic_csv, _dataset_signature, _fit_predict, _frame,
     _verified_cache, summarize,
 )
@@ -37,7 +37,7 @@ from models.listaware_shotgun_specs import (
     ADJUSTED, ADVANCED, BASIC, BINARY, CANDIDATES, SPATIAL, Candidate,
     parameters,
 )
-from spacetime_fast import _cap
+from experiments.spacetime_fast import _cap
 
 VERSION = 1
 SCREEN_MONTHS = ("2025-03", "2025-04", "2025-05")

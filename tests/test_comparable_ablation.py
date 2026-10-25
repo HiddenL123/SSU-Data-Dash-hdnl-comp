@@ -10,7 +10,7 @@ from models.boost_regressor import XGBoostRegressor
 from models.model import OffMarketModel
 from models.direct_listing import DirectListingModel
 from test_starter import make_listings
-from feature.comparable_benchmark import run_comparable_benchmark
+from comparisons.comparable_benchmark import run_comparable_benchmark
 
 
 def _sales(types, lats, sold_dates, prices):
