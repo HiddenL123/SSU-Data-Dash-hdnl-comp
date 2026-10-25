@@ -26,7 +26,7 @@ not from assuming CatBoost feature effects transfer to another family.
 from __future__ import annotations
 
 from models.listaware_shotgun_specs import (
-    BASIC, BINARY, SPATIAL, ADJUSTED, ADVANCED, CANDIDATES, Candidate,
+    BASIC, BINARY, SPATIAL, ADVANCED, CANDIDATES, Candidate,
 )
 
 # Only recipes absent from the existing historical catalog are added here.
