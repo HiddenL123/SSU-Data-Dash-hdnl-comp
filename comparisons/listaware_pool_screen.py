@@ -37,7 +37,10 @@ from models.listaware_shotgun_specs import (
     ADJUSTED, ADVANCED, BASIC, BINARY, CANDIDATES, SPATIAL, Candidate,
     parameters,
 )
-from experiments.spacetime_fast import _cap
+from models.listaware_candidate_pool import (
+    EXTRA_CANDIDATES, CURATED, CONFIRMATION_ANCHORS,
+)
+from spacetime_fast import _cap
 
 VERSION = 1
 SCREEN_MONTHS = ("2025-03", "2025-04", "2025-05")
@@ -123,6 +126,7 @@ CATALOG = {
     )},
     **CHALLENGERS,
     **EXTRA,
+    **EXTRA_CANDIDATES,
 }
 
 GROUPS = {
@@ -163,6 +167,9 @@ SUITES = {
     "spatial": (*SEED_REFERENCE, *GROUPS["spatial"]),
     "objectives": (*SEED_REFERENCE, *GROUPS["objectives"]),
     "avm": (*SEED_REFERENCE, *GROUPS["avm"]),
+    # Standalone/family-diverse recipes identified in prior pilot screens.
+    # New suite avoids changing the historical "all" screen manifest/caches.
+    "curated": (*SEED_REFERENCE, *CURATED),
     "all": (*GROUPS["core"], *(
         name for group in GROUPS.values() for name in group
     )),
@@ -172,9 +179,8 @@ SUITES = {
     for suite, names in SUITES.items()
 }
 
-if set(CATALOG) != set(SUITES["all"]) or any(
-    not set(names).issubset(CATALOG) for names in SUITES.values()
-):
+if (set(CATALOG) != set(SUITES["all"]).union(SUITES["curated"])
+    or any(not set(names).issubset(CATALOG) for names in SUITES.values())):
     raise RuntimeError("The experiment suites and candidate catalog differ")
 
 
@@ -197,7 +203,7 @@ def catalog_frame(names=None):
     ])
 
 
-def choose_confirmation(pooled, *, top_k=8):
+def choose_confirmation(pooled, *, top_k=8, anchors=()):
     """Choose by screened individual accuracy, retaining model-family breadth.
 
     THIS procedure can use ONLY the initial chronological SCREEN score table,
@@ -215,15 +221,26 @@ def choose_confirmation(pooled, *, top_k=8):
         raise ValueError("Invalid screen metrics")
     metrics["objective"] = .65 * metrics.mdape + .35 * metrics.mape
     metrics = metrics.sort_values(["objective", "mdape", "variant"])
-    selected = list(SEED_REFERENCE)
-    # Strongest screened nonreference member from each backend, if present.
+    mandatory = tuple(dict.fromkeys((*SEED_REFERENCE, *anchors)))
+    if any(name not in set(metrics.variant) for name in mandatory):
+        raise ValueError("Screen is missing required curated confirmation anchors")
+    if top_k < len(mandatory):
+        raise ValueError(
+            f"Confirmation needs top_k >= {len(mandatory)} for the "
+            "predeclared multi-family anchors"
+        )
+    selected = list(mandatory)
+    # Explicitly preserve opportunities for all THREE families, but never
+    # force their admission to the eventual ensemble.
     for family in ("catboost", "xgboost", "lightgbm"):
+        if len(selected) >= top_k:
+            break
         for name in metrics.variant:
             if name not in selected and CATALOG[name].backend == family:
                 selected.append(name)
                 break
     for name in metrics.variant:
-        if name not in selected and len(selected) < max(top_k, len(selected)):
+        if name not in selected and len(selected) < top_k:
             selected.append(name)
     return tuple(selected)
 
@@ -243,7 +260,10 @@ def _read_screen_selection(screen_dir, *, data_hash, top_k, expected_suite):
     scores = pd.read_csv(scores_path)
     if set(scores.variant) != set(record["candidates"]):
         raise ValueError("Screen scores do not cover exactly the recorded candidates")
-    names = choose_confirmation(scores, top_k=top_k)
+    names = choose_confirmation(
+        scores, top_k=top_k,
+        anchors=CONFIRMATION_ANCHORS if expected_suite == "curated" else (),
+    )
     return names, {
         "source_screen_manifest_sha256": _sha256(manifest_path),
         "source_screen_scores_sha256": _sha256(scores_path),
