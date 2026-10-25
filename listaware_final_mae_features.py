@@ -111,25 +111,33 @@ def _verified_original_predictions(original, held_by_month):
         raise ValueError("Original prediction months differ from experiment months")
     for month, held in held_by_month.items():
         assert month in MONTHS
-        expected = held.ml_num.astype(str).to_numpy()
-        sold = held.sold_price.to_numpy(dtype=float)
-        types = held.house_type_name.fillna("Unknown").astype(str).to_numpy()
+        expected = held.copy()
+        expected["ml_num"] = expected.ml_num.astype(str)
+        expected = expected.set_index("ml_num")
+        if not expected.index.is_unique:
+            raise ValueError(f"Duplicate source MLS IDs in {month}")
+        sold = expected.sold_price.to_numpy(dtype=float)
+        types = expected.house_type_name.fillna("Unknown").astype(str).to_numpy()
         for (arm, variant), group in original.loc[original.month.eq(month)].groupby(
             ["arm", "variant"]
         ):
-            # Saved predictions come from models + blends and must match the
-            # SAME complete sale cohort as the newly trained challengers.
-            if (len(group) != len(held)
-                or not np.array_equal(group.ml_num.to_numpy(), expected)
-                or not np.allclose(group.sold_price.to_numpy(float), sold,
-                                   rtol=0, atol=.0001)
-                or not np.array_equal(group.house_type_name.to_numpy(str), types)):
+            # Saved BLENDS are sorted by MLS key while raw MODEL predictions
+            # preserve heldout row order. Validate by EXACT keys, not position.
+            paired = group.set_index("ml_num")
+            if (len(paired) != len(expected)
+                or not paired.index.is_unique
+                or not paired.index.sort_values().equals(expected.index.sort_values())):
                 raise ValueError(f"Existing cohort mismatch: {month} {arm}/{variant}")
-            p = group.predicted_price.to_numpy(float)
+            paired = paired.loc[expected.index]
+            if (not np.allclose(paired.sold_price.to_numpy(float), sold,
+                                rtol=0, atol=.0001)
+                or not np.array_equal(paired.house_type_name.to_numpy(str), types)):
+                raise ValueError(f"Existing cohort mismatch: {month} {arm}/{variant}")
+            p = paired.predicted_price.to_numpy(float)
             if not (np.isfinite(p).all() and (p > 0).all()):
                 raise ValueError(f"Invalid previous prediction: {month} {variant}")
             expected_ape = 100 * np.abs(p - sold) / sold
-            if not np.allclose(group.ape.to_numpy(float), expected_ape,
+            if not np.allclose(paired.ape.to_numpy(float), expected_ape,
                                rtol=1e-9, atol=1e-7):
                 raise ValueError(f"Incorrect cached APE: {month} {variant}")
     return original
