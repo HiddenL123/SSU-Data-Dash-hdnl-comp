@@ -65,11 +65,11 @@ chronological folds.
 
 ```bash
 # First explore a diverse candidate pool; restartable model/month caches.
-uv run python -m feature.listaware_pool_screen --stage screen --suite all
+uv run python -m feature.listaware_pool_screen --stage screen --suite curated
 
 # Shortlist using only Mar--May screen, then full-history fit on Jun--Jul.
-# 12 is the requested shortlist size (at least 4 historical controls).
-uv run python -m feature.listaware_pool_screen --stage confirm --suite all --top-k 12 --screen-dir outputs/listaware_pool_screen_all
+# Retain 4 incumbent controls + Cat/XGB/LGB feature anchors, cap at 14.
+uv run python -m feature.listaware_pool_screen --stage confirm --suite curated --top-k 14 --screen-dir outputs/listaware_pool_screen_curated
 
 # Greedy admission using Jun--Jul full-strength predictions ONLY.
 uv run python listaware_ensemble_longrun.py select --max-members 8
@@ -81,6 +81,10 @@ uv run python listaware_ensemble_longrun.py audit --threads 8
 # save a portable inference model (not automatically used by run.py).
 uv run python listaware_ensemble_longrun.py finalize --threads 8 --model-name listaware_longrun_8
 ```
+
+The candidate pool follows [the curated recipe rationale](docs/listaware_curated_pool.md).
+The confirmation includes all three model families; final admission is never
+forced for any family when it harms the matched selection objective.
 
 The selection metric is `0.65*MdAPE + 0.35*MAPE`, with a minimum
 0.01-percentage-point marginal improvement and a 0.03-pp MAPE regression
