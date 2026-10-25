@@ -111,4 +111,4 @@ over the frozen ensemble.**
 - New experiments write new `outputs/` folders and do not update the existing off-market saved model or release roster.
 - Run `py -3.13 -m pytest tests/test_crossfamily_followups.py -q` before training. All actual competition results require the user's local data files and saved ensemble audit; the code alone cannot establish improved accuracy.
 
-Interactive root notebooks: [list-aware follow-up](../listaware_fixed_origin_followup.ipynb) and [off-market follow-up](../offmarket_crossfamily_blend.ipynb).
+Interactive root notebooks: [list-aware follow-up](../experiments/listaware_fixed_origin_followup.ipynb) and [off-market follow-up](../experiments/offmarket_crossfamily_blend.ipynb).

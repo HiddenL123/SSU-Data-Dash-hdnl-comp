@@ -5,11 +5,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.realworld_avm_features import (
+from features.realworld_avm_features import (
     HedonicNeighborhoodFeatures, LaggedTileMarketFeatures, VARIANTS,
 )
-from models.spacetime_screen_features import FEATURE_VARIANTS, SpaceTimeAddon
-from avm_realworld_shotgun import (
+from features.spacetime_screen_features import FEATURE_VARIANTS, SpaceTimeAddon
+from feature.avm_realworld_shotgun import (
     _assemble_reference, _score_all, run_realworld_shotgun,
 )
 
@@ -129,7 +129,7 @@ def test_reference_must_cover_exact_homes_and_prices():
 def test_research_runner_resumes_completed_month_without_training(
     tmp_path, monkeypatch, housing
 ):
-    import avm_realworld_shotgun as runner
+    import feature.avm_realworld_shotgun as runner
 
     # Build a valid 1-month audit reference matching the mocked screen cohort.
     chosen = housing.loc[housing.date_sold.dt.to_period("M") == pd.Period("2024-06")]

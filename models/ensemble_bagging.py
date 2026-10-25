@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from models.text_features import SELECTED_TERMS, training_vocabulary
+from features.text_features import SELECTED_TERMS, training_vocabulary
 
 
 @dataclass(frozen=True)

@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import ensemble_automl_factory as factory
-from ensemble_automl_factory import FactoryRun, FactorySettings
+import models.ensemble_automl_factory as factory
+from models.ensemble_automl_factory import FactoryRun, FactorySettings
 from models.automl_checkpoint import exclusive_factory_lock, write_json, write_csv
 from test_starter import make_listings
 

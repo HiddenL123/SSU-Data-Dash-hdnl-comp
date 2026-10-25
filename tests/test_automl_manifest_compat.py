@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from ensemble_automl_factory import FactorySettings
+from models.ensemble_automl_factory import FactorySettings
 from models.automl_manifest import (
     compare_manifests, compute_manifest, saved_factory_settings,
 )

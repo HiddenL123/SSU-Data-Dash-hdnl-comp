@@ -25,7 +25,7 @@ specify `track="off_market"` or `track="list_aware"` explicitly; omitting it
 is intentionally legacy behavior for backward compatibility.
 
 ```python
-from save_model import (
+from models.save_model import (
     save_model, load_model, model_info,
     list_saved_models, list_model_catalog, save_validation_tracks,
 )

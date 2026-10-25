@@ -222,7 +222,7 @@ def test_real_cross_family_spline_geo_fit_and_predict_with_hidden_homes(sales, n
 
 def test_catboost_and_xgboost_share_engineered_feature_names_but_correct_dtypes(sales):
     import data
-    from models.features import make_features
+    from features.features import make_features
     _, history, held = _month_with_homes(sales, 5)
     train = history.iloc[-140:].copy()
     hidden = data.hide_answers(held, "list_aware")

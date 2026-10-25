@@ -3,10 +3,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.spacetime_advanced_features import (
+from features.spacetime_advanced_features import (
     ADVANCED_FEATURE_VARIANTS, AdvancedSpaceTimeAddon,
 )
-from models.spacetime_screen_features import FEATURE_VARIANTS, SpaceTimeAddon
+from features.spacetime_screen_features import FEATURE_VARIANTS, SpaceTimeAddon
 
 
 @pytest.fixture(scope="module")

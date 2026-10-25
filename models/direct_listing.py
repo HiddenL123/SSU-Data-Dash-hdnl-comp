@@ -7,8 +7,8 @@ from copy import deepcopy
 import numpy as np
 from catboost import CatBoostRegressor
 
-from models.features import BoostingFeatures, make_features
-from models.ratio_comparable_features import RatioComparableFeatures
+from features.features import BoostingFeatures, make_features
+from features.ratio_comparable_features import RatioComparableFeatures
 from .components import adapt_component
 
 

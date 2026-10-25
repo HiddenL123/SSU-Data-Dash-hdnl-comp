@@ -14,7 +14,7 @@ import run
 from models.arima import ArimaResidualModel
 from models.boost_regressor import CatBoostRegressor
 from models.defaults import DEFAULT_PARAMS
-from models.features import make_features
+from features.features import make_features
 from models.legacy.gb_models import GBListAwareModel, GBOffMarketModel
 from models.boost_regressor import LightGBMRegressor
 from models.model import ListAwareModel, OffMarketModel
@@ -220,7 +220,7 @@ def test_invalid_inputs_and_unfitted_prediction():
 def test_legacy_feature_module_can_still_be_loaded_by_notebook_file_path():
     import importlib.util
     from pathlib import Path
-    from models.legacy.basic_features import tf_idf
+    from features.basic_features import tf_idf
     path = Path(__file__).resolve().parents[1] / "models/basic_features.py"
     spec = importlib.util.spec_from_file_location("project_basic_features", path)
     module = importlib.util.module_from_spec(spec)

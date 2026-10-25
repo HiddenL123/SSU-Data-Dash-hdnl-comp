@@ -53,7 +53,7 @@ def compare_manifests(saved, local):
 
 def saved_factory_settings(root, *, generations):
     """Use checkpoint parameters explicitly, without skipping data checks."""
-    from ensemble_automl_factory import FactorySettings
+    from models.ensemble_automl_factory import FactorySettings
 
     file = Path(root) / "manifest.json"
     if not file.is_file():
@@ -72,7 +72,7 @@ def diagnose(root, *, generations=2, use_saved_settings=False):
     No folders, roster, archive or Optuna state are changed.
     """
     import data
-    from ensemble_automl_factory import FactorySettings, VERSION
+    from models.ensemble_automl_factory import FactorySettings, VERSION
     from models.automl_profiles import release_settings
     from spacetime_fast import XGB_TUNED
 

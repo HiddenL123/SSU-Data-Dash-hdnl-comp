@@ -17,7 +17,7 @@ import pandas as pd
 from pandas.testing import assert_frame_equal
 
 try:
-    from .spatiotemporal_features import ComparableSalesFeatures
+    from features.spatiotemporal_features import ComparableSalesFeatures
 except ImportError:
     from spatiotemporal_features import ComparableSalesFeatures
 

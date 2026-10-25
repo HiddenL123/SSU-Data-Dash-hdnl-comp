@@ -6,17 +6,17 @@ research runners, and **tests/**.
 
 | File | Responsibility |
 | --- | --- |
-| `models/spacetime_structural_features.py` | Shared Toronto-area projection, listing-time coordinate features and matched XGBoost feature identifier |
+| `features/spacetime_structural_features.py` | Shared Toronto-area projection, listing-time coordinate features and matched XGBoost feature identifier |
 | `models/spacetime_structural_residuals.py` | Local spatiotemporal kernel, house-type-aware kernel, spatial Matérn GP, space-time Matérn GP |
 | `models/spacetime_gpboost.py` | Independent joint GPBoost (boosted trees + Vecchia-approximated GP), optional package |
 | `models/spacetime_screen_residuals.py` | Existing Tensor GAM used as an incumbent correction, not duplicated |
 | `spacetime_structural_shotgun.py` | Reusable pilot-only sampling, chronological evaluation, caches, bootstrap intervals, model triage |
-| `spacetime_fast.ipynb` | **Primary interactive entry point**: initial smoke experiment, plots, optional three-month test |
+| `experiments/spacetime_fast.ipynb` | **Primary interactive entry point**: initial smoke experiment, plots, optional three-month test |
 | `tests/test_spacetime_structural_shotgun.py` | Synthetic checks including no-target features, finite GP output, missing optional GPBoost and resumption |
 
 ## Run
 
-**Preferred workflow:** Open `spacetime_fast.ipynb` and run only the appended
+**Preferred workflow:** Open `experiments/spacetime_fast.ipynb` and run only the appended
 **Structural spatiotemporal shotgun** cells. They provide the initial one-month
 experiment, display comparisons and failures, and expose an opt-in
 `RUN_STRUCTURAL_THREE_MONTH` flag. Both previously completed runs default to off;
@@ -67,7 +67,7 @@ temporal correlation (space-time variant), latent variance 0.003, residual
 noise variance 0.012, and correction strength 0.5. Its boosting features,
 model and chronological splits are not altered by this experiment.
 
-Open **`spacetime_fast.ipynb`** and run the final **Tune Matérn** cells:
+Open **`experiments/spacetime_fast.ipynb`** and run the final **Tune Matérn** cells:
 
 1. `run_matern_tuning(...)` tunes spatial and space-time Matérn parameters
    on May, June and July 2025 only, with earlier out-of-time XGBoost errors.

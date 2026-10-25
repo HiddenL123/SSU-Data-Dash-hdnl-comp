@@ -26,10 +26,10 @@ import pandas as pd
 
 import data
 from spacetime_fast import _cap, XGB_TUNED
-from spacetime_combination_screen import _predict as predict_xgb
+from feature.spacetime_combination_screen import _predict as predict_xgb
 from models.spacetime_structural_residuals import local_kernel, matern_gp
 from models.spacetime_gpboost import gpboost_joint
-from models.spacetime_structural_features import SPLINE_GEO_SUFFIX
+from features.spacetime_structural_features import SPLINE_GEO_SUFFIX
 from models.spacetime_screen_residuals import SpaceTimeResidual
 
 VERSION = 2

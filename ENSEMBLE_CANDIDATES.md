@@ -26,7 +26,7 @@ directly comparable** to the full-history 700-tree six-month score.
 
 ## Feature-bagging candidates
 
-`models/text_features.py` provides **47 selected terms** and a **training-fitted
+`features/text_features.py` provides **47 selected terms** and a **training-fitted
 approximately 1,000-term binary BoW** representation. The candidate bank for
 bagging is the union of the selected terms and up to 1,000 additional
 training-discovered terms, so the union may be larger than 1,000.
@@ -99,7 +99,7 @@ errors.
   caches, metrics, and a manifest of terms/rows for each bag.
 - `models/ensemble_blending.py`: fixed-weight **log-price** blending with
   matched-key and positive-price checks; no leakage-prone weight fitting.
-- `ensemble_starter.ipynb`: notebook entry point and opt-in pilot controls.
+- `experiments/ensemble_starter.ipynb`: notebook entry point and opt-in pilot controls.
 
 Pilot output path: `outputs/ensemble_feature_bagging_smoke/`. Prediction
 tables use `month, ml_num, member, sold_price, predicted_price` and must
@@ -116,7 +116,7 @@ Track-scoped storage is now active. New fitted member collections should use
 `saved_models/list_aware/<run_name>/`; the existing flat folder is **legacy**,
 left untouched for the original 6-month XGBoost snapshots.
 
-The opt-in `ensemble_starter.ipynb` pilot can set
+The opt-in `experiments/ensemble_starter.ipynb` pilot can set
 `SAVE_FITTED_ENSEMBLE_MODELS=True` to persist a **reusable bundle** containing
 one fitted feature provider (historical comparable index + training-fitted text
 vocabulary), independently fitted XGBoost members, selected columns, log
@@ -134,7 +134,7 @@ with its own target and historical validation.
 
 ## Shrinkage versus complementarity experiment (implemented)
 
-Run the **shrinkage-versus-blending** cell in `ensemble_starter.ipynb`
+Run the **shrinkage-versus-blending** cell in `experiments/ensemble_starter.ipynb`
 after the Matérn confirmation CSV exists. This experiment fits **no new
 models**, selects **no weights**, and compares exactly matched September–
 November 2025 homes from `confirmation_predictions.csv`.
@@ -249,7 +249,7 @@ search engine.
 
 `ensemble_automl_factory.py` and `models/automl_search.py` implement
 a **bounded, opt-in starter**, not the complete multi-family evolutionary
-optimizer. Execute `RUN_AUTOML_FACTORY=True` in `ensemble_starter.ipynb`.
+optimizer. Execute `RUN_AUTOML_FACTORY=True` in `experiments/ensemble_starter.ipynb`.
 Install the optional dependency using `pip install optuna`.
 
 - Candidate generator: deterministic random combinations of selected 47,

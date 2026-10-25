@@ -20,7 +20,7 @@ pip install -r requirements.txt
 ```
 
 The data downloads itself on first use. No Python? Use the
-[Colab notebook](https://colab.research.google.com/github/erwinzhang7/SSU-Data-Dash/blob/main/notebooks/quickstart.ipynb).
+[Colab notebook](https://colab.research.google.com/github/HiddenL123/SSU-Data-Dash-hdnl-comp/blob/main/notebooks/quickstart.ipynb).
 Prefer R? See `r/baseline.R`.
 
 ## Commands
@@ -34,25 +34,37 @@ python run.py check      # check them
 
 On Windows, use `py` if `python` is not found.
 
-## What to edit
+## Repository layout
 
-- **`features.py`**: the features.
-- **`models.py`**: the models. Two simple baselines to beat: list price (list-aware) and the
-  10 nearest earlier sales (off-market). `FeatureModel` (gradient-boosted trees) is ready to switch on.
+- [`features/`](features/): reusable feature providers, encoders, comparable sales, spatial, temporal and text transformations. Start with `from features import make_features`.
+- [`models/`](models/): estimators, residual models, ensemble implementations and model storage (`models.save_model`).
+- [`feature/`](feature/): feature research helpers. For example, `python -m feature.text_benchmark --help`.
+- [`experiments/`](experiments/): research notebooks, including historical notebooks in `experiments/legacy/`.
+- [`model_run.ipynb`](model_run.ipynb): training and validation entry point; [`ensemble_release.ipynb`](ensemble_release.ipynb): release/resume workflow.
+- `data.py` and `run.py`: data access and the existing CLI.
+
+Legacy Python imports and root CLI commands remain supported. Notebook setup
+locates the checkout from the kernel's working directory or its ancestors and
+keeps output paths relative to the repository root. For kernels started elsewhere,
+set `DATA_DASH_ROOT` to the checkout. In the release notebook, select the local
+execution profile and checkpoint archive path when running outside Colab.
+
+See the [migration inventory and compatibility notes](docs/repository_organization.md)
+for before/after trees, all moved files, retained aliases, and validation results.
 
 ## Follow-up: fixed-origin and cross-family blending
 
 Two **separate, non-neural historical experiments** extend the existing
 showdowns without changing either frozen release model:
 
-- [List-aware fixed-origin and MAE blend notebook](listaware_fixed_origin_followup.ipynb)
+- [List-aware fixed-origin and MAE blend notebook](experiments/listaware_fixed_origin_followup.ipynb)
   (`listaware_fixed_origin_followup.py`): train the six shortlisted
   CatBoost/XGBoost/LightGBM models **once** before August 2025, predict
   August–October without retraining, and compare the 50/35/15 winner with
   predeclared CatBoost-MAE blends. Existing full-strength expanding predictions
   can be analyzed with **zero retraining** using
   `--from-predictions outputs/listaware_full_shortlist/predictions.csv`.
-- [Off-market frozen ensemble cross-family notebook](offmarket_crossfamily_blend.ipynb)
+- [Off-market frozen ensemble cross-family notebook](experiments/offmarket_crossfamily_blend.ipynb)
   (`offmarket_crossfamily_blend.py`): train tuned standalone XGBoost,
   CatBoost and LightGBM on the **same earlier sales**, then compare cross-family
   mixtures against both standalone XGBoost and the unchanged frozen ensemble.
@@ -83,11 +95,11 @@ Two notebooks provide configurable, **non-neural** chronological research runs
 using the existing project scripts, including cached predictions and matched
 MdAPE comparisons:
 
-- [Off-market AVM feature shotgun](realworld_avm_shotgun.ipynb):
+- [Off-market AVM feature shotgun](experiments/realworld_avm_shotgun.ipynb):
   hedonic-adjusted comparables, out-of-time local residuals, robust comparable
   statistics and multiscale historical geographic features, compared with the
   frozen ensemble audit on identical homes.
-- [List-aware CatBoost–XGBoost showdown](listaware_shotgun.ipynb):
+- [List-aware CatBoost–XGBoost showdown](experiments/listaware_shotgun.ipynb):
   the CatBoost Huber baseline, tuned XGBoost/LightGBM, transplanted spatial
   features and predeclared cross-family blends.
 

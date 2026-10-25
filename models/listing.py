@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
-from .gb_features import square_feet
+from features.gb_features import square_feet
 
 
 def _checked_log_prices(train):

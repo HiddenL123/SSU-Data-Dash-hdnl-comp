@@ -4,14 +4,14 @@ import pandas as pd
 import pytest
 
 import data
-from models.features import make_features
-from models.text_features import (
+from features.features import make_features
+from features.text_features import (
     TEXT_VARIANTS, make_text_base, training_vocabulary,
 )
 from models.boost_regressor import LightGBMRegressor
 from models.model import OffMarketModel
 from models.direct_listing import DirectListingModel
-from text_benchmark import run_benchmark
+from feature.text_benchmark import run_benchmark
 from test_starter import make_listings
 
 

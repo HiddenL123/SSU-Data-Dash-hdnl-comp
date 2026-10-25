@@ -2,8 +2,8 @@
 import pandas as pd
 import pytest
 
-from models.features import make_features
-from models.legacy.gb_features import BoostingFeatures
+from features.features import make_features
+from features.gb_features import BoostingFeatures
 from test_starter import make_listings
 
 

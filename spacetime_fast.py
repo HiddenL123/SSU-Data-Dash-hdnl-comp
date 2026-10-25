@@ -26,8 +26,8 @@ from xgboost import XGBRegressor
 
 import data
 from models.defaults import DEFAULT_PARAMS
-from models.features import make_features
-from models.spacetime_screen_features import FEATURE_VARIANTS, SpaceTimeAddon
+from features.features import make_features
+from features.spacetime_screen_features import FEATURE_VARIANTS, SpaceTimeAddon
 from models.spacetime_screen_residuals import RESIDUAL_VARIANTS, SpaceTimeResidual
 
 # The current tuned XGBoost Binary BoW model_run.ipynb parameters, except that

@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 import data
-from models.features import make_features
+from features.features import make_features
 from models.listaware_shotgun_specs import CAT_TUNED_RMSE, LGB_TUNED, SPATIAL
 from models.automl_checkpoint import write_csv
 from spacetime_fast import XGB_TUNED, _metric

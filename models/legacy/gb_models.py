@@ -18,7 +18,7 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.arima.model import ARIMA
 
-from models.gb_features import BoostingFeatures, square_feet
+from features.gb_features import BoostingFeatures, square_feet
 from models.dummy_model import DummyModel
 
 

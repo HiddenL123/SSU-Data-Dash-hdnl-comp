@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from models.spacetime_structural_features import (
+from features.spacetime_structural_features import (
     FEATURE_SET, SPLINE_GEO_SUFFIX, coords,
 )
 from models.spacetime_structural_residuals import local_kernel, matern_gp
