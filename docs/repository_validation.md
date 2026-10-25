@@ -12,7 +12,7 @@ experiment reruns were started; existing tests use small synthetic fits.
 | Full suite after migration, including the initial 86 migration checks | 385 passed, the same 9 failed, 2 skipped |
 | Final targeted migration suite (`python -m pytest tests/test_repository_organization.py -q`) | 90 passed |
 | Pre-refactor fitted-provider fixtures | 24 cases: exact training/prediction schema, dtype, column order and numerical equality |
-| Original and canonical CLI help | All 12 original argparse entry points match captured help; moved CLIs also match when run with `python -m feature.<module>` |
+| Original and canonical CLI help | All 12 original argparse entry points match captured help; moved CLIs also match when run with `python -m comparisons.<module>` |
 | Notebook validation | All 20 notebooks validate and local import modules/attributes resolve; no notebook training cells rerun |
 | Notebook preservation | Cell counts/order, execution counts, outputs, IDs and metadata match pre-migration hashes |
 | Import order | `features` imports without loading `models`; subsequent legacy imports resolve to the same objects |

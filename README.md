@@ -38,7 +38,7 @@ On Windows, use `py` if `python` is not found.
 
 - [`features/`](features/): reusable feature providers, encoders, comparable sales, spatial, temporal and text transformations. Start with `from features import make_features`.
 - [`models/`](models/): estimators, residual models, ensemble implementations and model storage (`models.save_model`).
-- [`feature/`](feature/): feature research helpers. For example, `python -m feature.text_benchmark --help`.
+- [`feature/`](feature/): feature research helpers. For example, `python -m comparisons.text_benchmark --help`.
 - [`experiments/`](experiments/): research notebooks, including historical notebooks in `experiments/legacy/`.
 - [`model_run.ipynb`](model_run.ipynb): training and validation entry point; [`ensemble_release.ipynb`](ensemble_release.ipynb): release/resume workflow.
 - `data.py` and `run.py`: data access and the existing CLI.

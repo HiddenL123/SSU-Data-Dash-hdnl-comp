@@ -62,7 +62,7 @@ EXTRA_CANDIDATES = {
 }
 
 # Balanced by family, with multiple strong *feature* configurations. Names
-# not in EXTRA_CANDIDATES are defined in feature.listaware_pool_screen's
+# not in EXTRA_CANDIDATES are defined in comparisons.listaware_pool_screen's
 # original CATALOG and preserve their existing parameters.
 CURATED_BY_FAMILY = {
     "catboost": (

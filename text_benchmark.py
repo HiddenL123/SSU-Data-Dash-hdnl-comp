@@ -1,8 +1,8 @@
-"""Compatibility alias for :mod:`feature.text_benchmark`."""
+"""Compatibility alias for :mod:`comparisons.text_benchmark`."""
 import sys
 from importlib import import_module
 
-_implementation = import_module("feature.text_benchmark")
+_implementation = import_module("comparisons.text_benchmark")
 
 def __getattr__(name):
     return getattr(_implementation, name)

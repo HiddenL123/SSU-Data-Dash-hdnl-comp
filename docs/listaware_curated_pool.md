@@ -64,9 +64,9 @@ for full-budget Jun–Jul 2025 evaluation. Distinct, fingerprinted outputs:
 CLI alternative:
 
 ```powershell
-uv run python -m feature.listaware_pool_screen --stage screen --suite curated
+uv run python -m comparisons.listaware_pool_screen --stage screen --suite curated
 
-uv run python -m feature.listaware_pool_screen --stage confirm --suite curated --top-k 14 --screen-dir outputs/listaware_pool_screen_curated
+uv run python -m comparisons.listaware_pool_screen --stage confirm --suite curated --top-k 14 --screen-dir outputs/listaware_pool_screen_curated
 ```
 
 The compute branch's list-aware ensemble selector uses the latter directory

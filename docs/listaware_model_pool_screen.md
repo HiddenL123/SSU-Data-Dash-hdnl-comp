@@ -7,7 +7,7 @@ pipeline.
 
 **Notebook:** [../experiments/listaware_model_pool_screen.ipynb](../experiments/listaware_model_pool_screen.ipynb)
 
-**Python runner:** `feature/listaware_pool_screen.py`
+**Python runner:** `comparisons/listaware_pool_screen.py`
 
 ## Curated follow-up (from the latest composite feature experiment)
 
@@ -19,8 +19,8 @@ quota, XGB splines and LGB advanced alternatives. Refer to
 hypotheses and non-duplication rules.
 
 ```powershell
-uv run python -m feature.listaware_pool_screen --stage screen --suite curated
-uv run python -m feature.listaware_pool_screen --stage confirm --suite curated --top-k 14 --screen-dir outputs/listaware_pool_screen_curated
+uv run python -m comparisons.listaware_pool_screen --stage screen --suite curated
+uv run python -m comparisons.listaware_pool_screen --stage confirm --suite curated --top-k 14 --screen-dir outputs/listaware_pool_screen_curated
 ```
 
 Its output directories are separate from `all` to preserve existing cached
@@ -97,13 +97,13 @@ CLI equivalents from repository root:
 uv run pytest tests/test_listaware_pool_screen.py tests/test_listaware_shotgun.py -q
 
 # Small preflight screen
-uv run python -m feature.listaware_pool_screen --stage screen --suite core
+uv run python -m comparisons.listaware_pool_screen --stage screen --suite core
 
 # Complete broad screen
-uv run python -m feature.listaware_pool_screen --stage screen --suite all
+uv run python -m comparisons.listaware_pool_screen --stage screen --suite all
 
 # After its complete output exists; full-strength historical confirmation
-uv run python -m feature.listaware_pool_screen --stage confirm --suite all \
+uv run python -m comparisons.listaware_pool_screen --stage confirm --suite all \
     --screen-dir outputs/listaware_pool_screen_all
 ```
 

@@ -46,12 +46,12 @@ See [validation results and existing limitations](repository_validation.md).
 | `models/legacy/basic_features.py` | `features/basic_features.py` |
 | `models/legacy/ex_features.py` | `features/ex_features.py` |
 | `models/legacy/upstream_features.py` | `features/upstream_features.py` |
-| `text_benchmark.py` | `feature/text_benchmark.py` |
-| `comparable_benchmark.py` | `feature/comparable_benchmark.py` |
-| `avm_realworld_shotgun.py` | `feature/avm_realworld_shotgun.py` |
-| `spacetime_combination_screen.py` | `feature/spacetime_combination_screen.py` |
-| `spacetime_full_feature_comparison.py` | `feature/spacetime_full_feature_comparison.py` |
-| `listaware_final_mae_features.py` | `feature/listaware_final_mae_features.py` |
+| `text_benchmark.py` | `comparisons/text_benchmark.py` |
+| `comparable_benchmark.py` | `comparisons/comparable_benchmark.py` |
+| `avm_realworld_shotgun.py` | `comparisons/avm_realworld_shotgun.py` |
+| `spacetime_combination_screen.py` | `comparisons/spacetime_combination_screen.py` |
+| `spacetime_full_feature_comparison.py` | `comparisons/spacetime_full_feature_comparison.py` |
+| `listaware_final_mae_features.py` | `features/listaware_final_mae_features.py` |
 | `save_model.py` | `models/save_model.py` |
 | `ensemble_automl_factory.py` | `models/ensemble_automl_factory.py` |
 | `ensemble_release_candidate.py` | `models/ensemble_release_candidate.py` |
@@ -77,7 +77,7 @@ See [validation results and existing limitations](repository_validation.md).
 
 ## Compatibility
 
-Every moved Python module retains its old import path as a module alias, including private attributes and monkeypatches. `models.gb_features`, `models.basic_features`, and `models.ex_features` also forward directly to `features/`. Old pickle/joblib class references resolve through these aliases. Root research CLIs keep their original arguments; canonical execution is `python -m feature.<module>`. Saved-model paths, output defaults, manifests and data remain unchanged.
+Every moved Python module retains its old import path as a module alias, including private attributes and monkeypatches. `models.gb_features`, `models.basic_features`, and `models.ex_features` also forward directly to `features/`. Old pickle/joblib class references resolve through these aliases. Root research CLIs keep their original arguments; canonical execution is `python -m comparisons.<module>`. Saved-model paths, output defaults, manifests and data remain unchanged.
 
 Feature implementations import only feature code and third-party libraries. Model code consumes features. Feature research helpers may depend on estimators and existing mixed model/feature experiment orchestration.
 

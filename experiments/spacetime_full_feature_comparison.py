@@ -1,8 +1,8 @@
-"""Compatibility alias for :mod:`feature.spacetime_full_feature_comparison`."""
+"""Compatibility alias for :mod:`comparisons.spacetime_full_feature_comparison`."""
 import sys
 from importlib import import_module
 
-_implementation = import_module("feature.spacetime_full_feature_comparison")
+_implementation = import_module("comparisons.spacetime_full_feature_comparison")
 
 def __getattr__(name):
     return getattr(_implementation, name)

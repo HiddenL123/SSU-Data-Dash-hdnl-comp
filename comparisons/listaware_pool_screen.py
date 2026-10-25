@@ -8,8 +8,8 @@ pilot budget. Optionally promote a capped, family-diverse subset to FULL-strengt
 Jun--Jul 2025 chronological confirmation. Neither stage adjusts blend weights.
 
 Run from repository root, or use experiments/listaware_model_pool_screen.ipynb.
-    python -m feature.listaware_pool_screen --stage screen --suite all
-    python -m feature.listaware_pool_screen --stage confirm \
+    python -m comparisons.listaware_pool_screen --stage screen --suite all
+    python -m comparisons.listaware_pool_screen --stage confirm \
         --screen-dir outputs/listaware_pool_screen_all
 
 This does NOT replace or mutate the existing 3.8996% Aug--Oct fixed-origin
