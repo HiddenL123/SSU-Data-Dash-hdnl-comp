@@ -14,8 +14,7 @@ list-aware uses the sale/list ratio. **Never blend them or share targets.**
 git clone --branch ensemble/dual-track-longrun-clean --single-branch https://github.com/HiddenL123/SSU-Data-Dash-hdnl-comp.git
 cd SSU-Data-Dash-hdnl-comp
 uv sync
-# The off-market factory imports Optuna, which is optional and not locked:
-uv pip install optuna
+# Optuna is optional; invoke the factory using uv's --with overlay.
 ```
 
 Put the *same* historical `listings.parquet` / `listings.csv` in `data/`,
@@ -37,12 +36,12 @@ A larger `--generations` increases candidates; it does **not** change the
 five Optuna trials per proposal, fixed tree count, search space or baseline.
 
 ```bash
-uv run python ensemble_rc.py run --profile overnight_local --generations 20 --output-dir outputs/offmarket_longrun_20
+uv run --with optuna python ensemble_rc.py run --profile overnight_local --generations 20 --output-dir outputs/offmarket_longrun_20
 uv run python ensemble_rc.py status --output-dir outputs/offmarket_longrun_20
 # Do NOT open the audit until the intended 20 generations are finished.
-uv run python ensemble_rc.py audit --profile overnight_local --generations 20 --output-dir outputs/offmarket_longrun_20
-uv run python ensemble_rc.py benchmark --profile overnight_local --generations 20 --output-dir outputs/offmarket_longrun_20
-uv run python ensemble_rc.py finalize --profile overnight_local --generations 20 --output-dir outputs/offmarket_longrun_20 --model-name offmarket_longrun_20
+uv run --with optuna python ensemble_rc.py audit --profile overnight_local --generations 20 --output-dir outputs/offmarket_longrun_20
+uv run --with optuna python ensemble_rc.py benchmark --profile overnight_local --generations 20 --output-dir outputs/offmarket_longrun_20
+uv run --with optuna python ensemble_rc.py finalize --profile overnight_local --generations 20 --output-dir outputs/offmarket_longrun_20 --model-name offmarket_longrun_20
 ```
 
 The existing factory writes strict restartable checkpoints and uses an OS lock.
