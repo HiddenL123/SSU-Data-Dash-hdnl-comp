@@ -251,6 +251,46 @@ def _read_screen_selection(screen_dir, *, data_hash, top_k):
     }
 
 
+def error_correlations(predictions):
+    """Pairwise signed log-error correlation on EXACT matched evaluation homes.
+
+    An exploratory diagnostic for the future model pool, NOT a model
+    admission score: lower correlation alone does not imply blend gain.
+    """
+    reference = predictions.loc[
+        predictions.variant.eq("cat_huber_baseline")
+    ].set_index(KEYS).sort_index()
+    if reference.empty or not reference.index.is_unique:
+        raise ValueError("Unique matched CatBoost Huber predictions required")
+    actual = reference.sold_price.to_numpy(float)
+    names, errors = [], []
+    for name, group in predictions.groupby("variant", sort=True):
+        aligned = group.set_index(KEYS).sort_index()
+        if (not aligned.index.equals(reference.index)
+            or not np.allclose(aligned.sold_price.to_numpy(float), actual,
+                               rtol=0, atol=.0001)):
+            raise ValueError(f"Misaligned pool correlation cohort: {name}")
+        p = aligned.predicted_price.to_numpy(float)
+        if not np.isfinite(p).all() or (p <= 0).any():
+            raise ValueError(f"Invalid pool prediction: {name}")
+        names.append(name)
+        errors.append(np.log(actual) - np.log(p))
+    rows = []
+    for i, left in enumerate(names):
+        for j in range(i+1, len(names)):
+            right = names[j]
+            a, b = errors[i], errors[j]
+            corr = (float(np.corrcoef(a, b)[0, 1])
+                    if np.std(a) > 0 and np.std(b) > 0 else np.nan)
+            rows.append({
+                "variant_a": left, "variant_b": right,
+                "signed_log_error_correlation": corr,
+            })
+    return pd.DataFrame(rows, columns=[
+        "variant_a", "variant_b", "signed_log_error_correlation"
+    ])
+
+
 def _ensure_manifest(output_dir, record):
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -372,6 +412,8 @@ def run(*, stage="screen", suite="all", screen_dir=None, output_dir=None,
     pooled, monthly, by_type = summarize(
         all_preds, repeats=bootstrap_repeats, seed=seed
     )
+    correlations = error_correlations(all_preds)
+    _atomic_csv(root / "error_correlations.csv", correlations)
     _atomic_csv(root / "predictions.csv", all_preds)
     _atomic_csv(root / "pooled_scores.csv", pooled)
     _atomic_csv(root / "monthly_scores.csv", monthly)
