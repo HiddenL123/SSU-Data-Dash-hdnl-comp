@@ -1,4 +1,4 @@
-"""Resumable, chronological, diversity-aware XGBoost ensemble AutoML (v1).
+"""Resumable LIST-AWARE CatBoost/XGBoost/LightGBM ensemble AutoML (v1).
 
 Run from ensemble_starter.ipynb (opt-in). Requires optional 'optuna'.
 No model ever fits on the candidate's validation labels. Separate folds:
@@ -26,42 +26,44 @@ from models.automl_checkpoint import (
 )
 from models.automl_portable import export_checkpoint
 from models.automl_search import (
-    Candidate, choose_admission, generate_candidates, log_blend,
-    metrics, objective, updated_weights,
+    choose_admission, log_blend, metrics, objective, updated_weights,
 )
+from models.listaware_factory_search import Candidate, generate_candidates
+from models.listaware_shotgun_specs import parameters as listaware_parameters
+from feature.listaware_pool_screen import CATALOG as LISTAWARE_CATALOG
+from models.listaware_factory_snapshot import ListAwareBaggedMember, ListAwareFactoryEnsemble
 from models.ensemble_bagging import (
     BagSpec, build_text_bank, sample_training_rows, select_text_terms,
 )
-from models.ensemble_snapshot import BaggedMember, FeatureBaggingEnsemble
 from features.features import make_features
 from features.text_features import TextAugmentedFeatures
 from models.save_model import model_info, save_model
-from spacetime_fast import XGB_TUNED, _cap, _make_estimator
+from spacetime_fast import _cap
 
 VERSION = 1
 
 
 @dataclass(frozen=True)
 class FactorySettings:
-    tuning_months: tuple[str, ...] = ("2025-03", "2025-04")
-    selection_months: tuple[str, ...] = ("2025-05", "2025-06")
-    audit_months: tuple[str, ...] = ("2025-07", "2025-08")
-    train_start: str = "2022-01-01"
-    train_cap: int = 5000
-    validation_cap: int = 250
-    trees: int = 220
+    tuning_months: tuple[str, ...] = ("2025-04", "2025-05")
+    selection_months: tuple[str, ...] = ("2025-06", "2025-07")
+    audit_months: tuple[str, ...] = ("2025-08", "2025-09", "2025-10")
+    train_start: str = "1900-01-01"
+    train_cap: int = 200000
+    validation_cap: int = 100000
+    trees: int = 700
     max_extra_terms: int = 1000
     min_df: int = 10
-    candidates_per_generation: int = 2
-    generations: int = 1
-    optuna_trials: int = 2
+    candidates_per_generation: int = 3
+    generations: int = 2
+    optuna_trials: int = 5
     minimum_ensemble_gain_pp: float = 0.02
     max_mape_regression_pp: float = 0.03
     max_members: int = 8
     seed: int = 42
-    output_dir: str = "outputs/ensemble_automl_factory_v1"
+    output_dir: str = "outputs/listaware_ensemble_factory_v1"
     save_accepted_snapshots: bool = False
-    screen_max_mdape: float = 22.0  # crude catastrophic-model prefilter only
+    screen_max_mdape: float = 15.0  # crude catastrophic-model prefilter only
 
     def __post_init__(self):
         months = [
@@ -105,8 +107,18 @@ def _text_provider(provider):
 
 
 def _feature_name(candidate):
-    suffix = "__st_" + "+".join(candidate.addons) if candidate.addons else ""
-    return "Xpt_spatiotemporal__full_binary" + suffix
+    """Fit a full binary text bank, bag its terms, retain recipe comp/spatial."""
+    name = LISTAWARE_CATALOG[candidate.recipe].feature_name
+    prefix = "Xpt_spatiotemporal"
+    if not name.startswith(prefix):
+        raise ValueError("List-aware candidate requires comparable feature base")
+    suffix = name[len(prefix):]
+    for rep in ("__selected_binary", "__selected_tfidf", "__full_binary",
+                "__full_tfidf", "__full_count", "__no_text"):
+        if rep in suffix:
+            suffix = suffix.replace(rep, "", 1)
+            break
+    return prefix + "__full_binary" + suffix
 
 
 class FactoryRun:
@@ -131,12 +143,23 @@ class FactoryRun:
         self.sales["date_listed"] = pd.to_datetime(self.sales.date_listed)
         self.sales["date_sold"] = pd.to_datetime(self.sales.date_sold)
         self.sale_months = self.sales.date_sold.dt.to_period("M")
+        values = self.sales[["sold_price", "list_price"]].to_numpy(float)
+        if not np.isfinite(values).all() or (values <= 0).any():
+            raise ValueError("Sale and list prices must be finite and positive")
         if self.sales.ml_num.astype(str).duplicated().any():
             raise ValueError("Monthly inputs require unique MLS identifiers")
         # Do NOT overwrite or bypass an incompatible Colab checkpoint.
         # The original v1 hash algorithm is intentionally preserved.
         from models.automl_manifest import compute_manifest, compare_manifests
-        setup = compute_manifest(self.cfg, self.sales, XGB_TUNED, version=VERSION)
+        setup = compute_manifest(
+            self.cfg, self.sales,
+            {"target": "log(sold/list)", "model_families": [
+                "catboost", "xgboost", "lightgbm"
+            ], "candidate_recipes": {
+                name: asdict(v) for name, v in LISTAWARE_CATALOG.items()
+            }},
+            version=VERSION,
+        )
         path = self.root / "manifest.json"
         if path.is_file():
             saved = json.loads(path.read_text(encoding="utf-8"))
@@ -159,10 +182,51 @@ class FactoryRun:
         events_file = self.root / "events.json"
         self.events = json.loads(events_file.read_text(encoding="utf-8")) if events_file.is_file() else []
 
-    def _new_estimator(self, params, seed):
-        model = _make_estimator(params, self.cfg.trees)
-        model.set_params(n_jobs=self.runtime_threads, random_state=seed)
-        return model
+    def _base_params(self, candidate):
+        spec = LISTAWARE_CATALOG[candidate.recipe]
+        if spec.backend != candidate.family or spec.target != "ratio":
+            raise ValueError("Incompatible estimator family or target")
+        return listaware_parameters(
+            spec, trees=self.cfg.trees, threads=self.runtime_threads
+        )
+
+    def _new_estimator(self, params, candidate):
+        from catboost import CatBoostRegressor
+        from xgboost import XGBRegressor
+        from lightgbm import LGBMRegressor
+        config = dict(params)
+        if candidate.family == "catboost":
+            config.update(thread_count=self.runtime_threads,
+                          random_seed=candidate.seed, verbose=False,
+                          allow_writing_files=False)
+            return CatBoostRegressor(**config)
+        if candidate.family == "xgboost":
+            config.update(n_jobs=self.runtime_threads,
+                          random_state=candidate.seed, device="cpu")
+            return XGBRegressor(**config)
+        config.update(n_jobs=self.runtime_threads,
+                      random_state=candidate.seed)
+        return LGBMRegressor(**config)
+
+    @staticmethod
+    def _fit_estimator(model, candidate, fold):
+        if candidate.family == "catboost":
+            categorical = fold["X"].select_dtypes(
+                include=["object", "string", "category"]
+            ).columns.tolist()
+            model.fit(fold["X"], fold["y"], cat_features=categorical)
+        else:
+            model.fit(fold["X"], fold["y"])
+
+    @staticmethod
+    def _reconstruct(fold, model):
+        result = fold["listed"] * np.exp(
+            fold["offset"] + np.asarray(model.predict(fold["H"]), float).reshape(-1)
+        )
+        if (result.shape != fold["listed"].shape or
+            not np.isfinite(result).all() or (result <= 0).any()):
+            raise ValueError("Invalid ratio-model reconstructed prices")
+        return result
 
     def _backup(self):
         # Called only from methods holding exclusive_factory_lock(root).
@@ -204,14 +268,14 @@ class FactoryRun:
         )
         terms = select_text_terms(bank, bag)
         provider = make_features(
-            _feature_name(candidate), model="xgboost", track="off_market"
+            _feature_name(candidate), model=candidate.family, track="list_aware"
         )
         text = _text_provider(provider)
         if text is None:
             raise RuntimeError("Expected training-fitted binary BoW provider")
         text.terms = tuple(bank)
         X = provider.fit_transform(train)
-        hidden = data.hide_answers(held, "off_market")
+        hidden = data.hide_answers(held, "list_aware")
         H = provider.transform(hidden)
         if not X.columns.equals(H.columns):
             raise ValueError("Training/holdout features not aligned")
@@ -222,13 +286,15 @@ class FactoryRun:
             *(inverse[term] for term in terms),
         ]
         row_ids = sample_training_rows(len(train), bag)
-        target = np.log(train.sold_price.to_numpy(dtype=float))
+        target = (np.log(train.sold_price.to_numpy(dtype=float))
+                  - np.log(train.list_price.to_numpy(dtype=float)))
         offset = float(np.median(target))
         fold = {
             "month": str(month),
             "X": X.iloc[row_ids][columns],
             "y": target[row_ids] - offset,
             "H": H[columns],
+            "listed": held.list_price.to_numpy(dtype=float),
             "offset": offset,
             "held": held,
             "truth": held.sold_price.to_numpy(dtype=float),
@@ -304,11 +370,9 @@ class FactoryRun:
             raise ValueError(f"Stale/misaligned member cache: {dest}")
 
         fold = self._prepare_fold(candidate, month)
-        model = self._new_estimator(params, candidate.seed)
-        model.fit(fold["X"], fold["y"])
-        predicted = np.exp(
-            fold["offset"] + np.asarray(model.predict(fold["H"]), dtype=float)
-        )
+        model = self._new_estimator(params, candidate)
+        self._fit_estimator(model, candidate, fold)
+        predicted = self._reconstruct(fold, model)
         metrics(fold["truth"], predicted)  # validate positive finite
         if cache:
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -635,7 +699,7 @@ class FactoryRun:
                 self._progress("screening", candidate, generation=generation)
                 t0 = perf_counter()
                 # Stage A: cheap untuned screen on FIRST earlier tuning fold.
-                baseline_params = dict(XGB_TUNED)
+                baseline_params = self._base_params(candidate)
                 from_time = self._predict_fold(
                     candidate, self.cfg.tuning_months[0], baseline_params,
                     fold_name="screen",
