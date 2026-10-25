@@ -30,7 +30,6 @@ from models.automl_search import (
 )
 from models.listaware_factory_search import Candidate, generate_candidates
 from models.listaware_shotgun_specs import parameters as listaware_parameters
-from models.listaware_candidate_pool import CURATED_CATALOG as LISTAWARE_CATALOG
 from models.listaware_factory_snapshot import ListAwareBaggedMember, ListAwareFactoryEnsemble
 from models.ensemble_bagging import (
     BagSpec, build_text_bank, sample_training_rows, select_text_terms,
@@ -41,7 +40,14 @@ from models.save_model import model_info, save_model
 from experiments.spacetime_fast import _cap
 
 VERSION = 1
-
+from models.listaware_factory_search import (
+    Candidate,
+    generate_candidates,
+    TEXT_MODES,
+    ROW_MODES,
+    ADDON_OPTIONS,
+    COMPARABLE_OPTIONS,
+)
 
 @dataclass(frozen=True)
 class FactorySettings:
@@ -106,19 +112,19 @@ def _text_provider(provider):
     return None
 
 
+
 def _feature_name(candidate):
-    """Fit a full binary text bank, bag its terms, retain recipe comp/spatial."""
-    name = LISTAWARE_CATALOG[candidate.recipe].feature_name
-    prefix = "Xpt_spatiotemporal"
-    if not name.startswith(prefix):
-        raise ValueError("List-aware candidate requires comparable feature base")
-    suffix = name[len(prefix):]
-    for rep in ("__selected_binary", "__selected_tfidf", "__full_binary",
-                "__full_tfidf", "__full_count", "__no_text"):
-        if rep in suffix:
-            suffix = suffix.replace(rep, "", 1)
-            break
-    return prefix + "__full_binary" + suffix
+    """Compose compatible features independently, like off-market."""
+
+    name = "Xpt_spatiotemporal__full_binary"
+
+    if candidate.comparable != "base":
+        name += f"__{candidate.comparable}"
+
+    if candidate.addons:
+        name += "__st_" + "+".join(candidate.addons)
+
+    return name
 
 
 class FactoryRun:
@@ -152,14 +158,35 @@ class FactoryRun:
         # The original v1 hash algorithm is intentionally preserved.
         from models.automl_manifest import compute_manifest, compare_manifests
         setup = compute_manifest(
-            self.cfg, self.sales,
-            {"target": "log(sold/list)", "model_families": [
-                "catboost", "xgboost", "lightgbm"
-            ], "candidate_recipes": {
-                name: asdict(v) for name, v in LISTAWARE_CATALOG.items()
-            }},
+            self.cfg,
+            self.sales,
+            {
+                "target": "log(sold/list)",
+                "candidate_generator": "compositional_v2",
+                "model_families": [
+                    "catboost",
+                    "xgboost",
+                    "lightgbm",
+                ],
+                "objectives": {
+                    "catboost": [
+                        "MAE",
+                        "RMSE",
+                        "Huber:delta=0.05",
+                    ],
+                    "xgboost": ["RMSE"],
+                    "lightgbm": ["RMSE"],
+                },
+                "feature_search": {
+                    "text": list(TEXT_MODES),
+                    "rows": list(ROW_MODES),
+                    "spatial": [list(v) for v in ADDON_OPTIONS],
+                    "comparables": list(COMPARABLE_OPTIONS),
+                },
+            },
             version=VERSION,
         )
+
         path = self.root / "manifest.json"
         if path.is_file():
             saved = json.loads(path.read_text(encoding="utf-8"))
@@ -183,12 +210,28 @@ class FactoryRun:
         self.events = json.loads(events_file.read_text(encoding="utf-8")) if events_file.is_file() else []
 
     def _base_params(self, candidate):
-        spec = LISTAWARE_CATALOG[candidate.recipe]
-        if spec.backend != candidate.family or spec.target != "ratio":
-            raise ValueError("Incompatible estimator family or target")
-        return listaware_parameters(
-            spec, trees=self.cfg.trees, threads=self.runtime_threads
+        """Use historical tuned defaults for the selected model family."""
+
+        from models.listaware_shotgun_specs import (
+            Candidate as ModelSpec,
+            parameters,
         )
+
+        spec = ModelSpec(
+            name=candidate.name,
+            backend=candidate.family,
+            feature_name=_feature_name(candidate),
+            target="ratio",
+            loss=candidate.objective,
+            tuned=candidate.family in ("xgboost", "lightgbm"),
+        )
+
+        return parameters(
+            spec,
+            trees=self.cfg.trees,
+            threads=self.runtime_threads,
+        )
+
 
     def _new_estimator(self, params, candidate):
         from catboost import CatBoostRegressor
