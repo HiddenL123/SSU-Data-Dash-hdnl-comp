@@ -4,13 +4,13 @@ import pandas as pd
 import pytest
 
 import data
-from models.features import make_features
-from models.spatiotemporal_features import ComparableSalesFeatures
+from features.features import make_features
+from features.spatiotemporal_features import ComparableSalesFeatures
 from models.boost_regressor import XGBoostRegressor
 from models.model import OffMarketModel
 from models.direct_listing import DirectListingModel
 from test_starter import make_listings
-from comparable_benchmark import run_comparable_benchmark
+from feature.comparable_benchmark import run_comparable_benchmark
 
 
 def _sales(types, lats, sold_dates, prices):

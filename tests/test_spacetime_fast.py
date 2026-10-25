@@ -4,8 +4,8 @@ import pandas as pd
 import pytest
 
 import data
-from models.features import make_features
-from models.spacetime_screen_features import SpaceTimeAddon, FEATURE_VARIANTS
+from features.features import make_features
+from features.spacetime_screen_features import SpaceTimeAddon, FEATURE_VARIANTS
 from models.spacetime_screen_residuals import SpaceTimeResidual, RESIDUAL_VARIANTS
 from spacetime_fast import (
     run_shotgun, _calibration_data, _train_and_predict, SCREEN_FEATURE_VARIANTS

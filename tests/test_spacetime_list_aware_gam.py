@@ -6,7 +6,7 @@ import pytest
 import data
 from models.boost_regressor import XGBoostRegressor, CatBoostRegressor
 from models.direct_listing import DirectListingModel
-from models.features import make_features
+from features.features import make_features
 from spacetime_list_aware_gam import compare_list_aware_spline_gam
 from test_starter import make_listings
 

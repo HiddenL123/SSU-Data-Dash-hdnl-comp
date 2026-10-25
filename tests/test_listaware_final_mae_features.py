@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from listaware_final_mae_features import (
+from feature.listaware_final_mae_features import (
     BASE_WEIGHTS, CHALLENGERS, MONTHS, REPLACEMENTS, WINNER,
     _prepare_manifest, _verified_original_predictions, replacement_blends,
 )
@@ -32,7 +32,7 @@ def make_predictions():
 
 
 def test_registered_feature_stacks_and_preserved_blend_weights():
-    from models.features import make_features
+    from features.features import make_features
 
     assert BASE_WEIGHTS == {
         "cat_mae": .50, "xgb_spline_geo": .35, "lgb_spline_geo": .15

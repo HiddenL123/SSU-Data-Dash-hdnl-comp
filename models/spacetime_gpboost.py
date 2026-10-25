@@ -10,8 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from models.features import make_features
-from models.spacetime_structural_features import FEATURE_SET, SPLINE_GEO_SUFFIX, coords
+from features.features import make_features
+from features.spacetime_structural_features import FEATURE_SET, SPLINE_GEO_SUFFIX, coords
 
 
 def gpboost_joint(train, homes, *, rounds=220, seed=42, return_components=False):

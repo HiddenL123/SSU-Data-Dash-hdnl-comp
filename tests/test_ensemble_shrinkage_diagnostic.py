@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ensemble_shrinkage_diagnostic import run_shrinkage_vs_blending
+from models.ensemble_shrinkage_diagnostic import run_shrinkage_vs_blending
 
 
 def example_predictions():

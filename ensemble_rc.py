@@ -105,7 +105,7 @@ def main(argv=None):
               import_checkpoint(args.checkpoint_archive, root))
         return 0
     if args.command == "predict":
-        from ensemble_release_candidate import predict_release
+        from models.ensemble_release_candidate import predict_release
         print("Submission candidate:",
               predict_release(
                   model_name=args.model_name,
@@ -145,7 +145,7 @@ def main(argv=None):
                 "day_cloud requires --checkpoint-archive on persistent "
                 "storage, e.g. a mounted Google Drive ZIP"
             )
-        from ensemble_automl_factory import run_automl_factory
+        from models.ensemble_automl_factory import run_automl_factory
         outcome, _, _ = run_automl_factory(
             **settings, runtime_threads=profile.xgb_threads,
             checkpoint_archive=args.checkpoint_archive,
@@ -155,7 +155,7 @@ def main(argv=None):
         print("Audit remains closed. Use the separate 'audit' command once frozen.")
         return 0
     if args.command == "audit":
-        from ensemble_automl_factory import run_automl_shadow_audit
+        from models.ensemble_automl_factory import run_automl_shadow_audit
         summary, _ = run_automl_shadow_audit(
             **settings, runtime_threads=profile.xgb_threads,
             checkpoint_archive=args.checkpoint_archive,
@@ -164,8 +164,8 @@ def main(argv=None):
         print("First-member reference:", summary["audit_first_reference_metrics"])
         return 0
     if args.command == "benchmark":
-        from ensemble_automl_factory import FactorySettings
-        from ensemble_release_candidate import benchmark_release
+        from models.ensemble_automl_factory import FactorySettings
+        from models.ensemble_release_candidate import benchmark_release
         report, _ = benchmark_release(
             FactorySettings(**settings),
             threads=profile.xgb_threads,
@@ -176,8 +176,8 @@ def main(argv=None):
         print("Prior evaluations inspected this period: not an untouched holdout.")
         return 0
     if args.command == "finalize":
-        from ensemble_automl_factory import FactorySettings
-        from ensemble_release_candidate import finalize_release
+        from models.ensemble_automl_factory import FactorySettings
+        from models.ensemble_release_candidate import finalize_release
         finalize_release(
             FactorySettings(**settings), threads=profile.xgb_threads,
             model_name=args.model_name,

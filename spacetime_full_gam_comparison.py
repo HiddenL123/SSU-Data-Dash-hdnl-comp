@@ -32,7 +32,7 @@ import pandas as pd
 import data
 from models.model import OffMarketModel
 from models.spacetime_screen_residuals import SpaceTimeResidual
-from spacetime_full_feature_comparison import (
+from feature.spacetime_full_feature_comparison import (
     _feature_spec, _from_cache, _signature, _write_frame,
 )
 from spacetime_full_validation import (

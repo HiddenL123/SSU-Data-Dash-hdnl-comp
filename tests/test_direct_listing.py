@@ -8,9 +8,9 @@ import data
 from models import make_model
 from models.arima import ArimaResidualModel
 from models.direct_listing import DirectListingModel
-from models.features import BoostingFeatures, make_features
-from models.ratio_comparable_features import RatioComparableFeatures
-from models.spatiotemporal_features import ComparableAugmentedFeatures
+from features.features import BoostingFeatures, make_features
+from features.ratio_comparable_features import RatioComparableFeatures
+from features.spatiotemporal_features import ComparableAugmentedFeatures
 from test_modular_models import FractionOfMean
 from test_starter import make_listings
 

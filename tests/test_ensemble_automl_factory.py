@@ -8,7 +8,7 @@ from models.automl_search import (
     Candidate, choose_admission, generate_candidates, log_blend,
     updated_weights, metrics,
 )
-from ensemble_automl_factory import FactorySettings, FactoryRun
+from models.ensemble_automl_factory import FactorySettings, FactoryRun
 from test_starter import make_listings
 
 

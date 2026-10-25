@@ -9,11 +9,11 @@ import pytest
 import data
 from models.boost_regressor import XGBoostRegressor
 from models.model import OffMarketModel
-from models.features import make_features
-from spacetime_full_feature_comparison import (
+from features.features import make_features
+from feature.spacetime_full_feature_comparison import (
     compare_full_spacetime_models, _from_cache, _feature_spec,
 )
-from spacetime_combination_screen import run_combination_screen
+from feature.spacetime_combination_screen import run_combination_screen
 from test_starter import make_listings
 
 
@@ -84,7 +84,7 @@ def test_full_history_compares_independently_and_resumes(tmp_path, monkeypatch):
 
     # All candidates have been cached. Only baseline predictions need to be
     # recomputed; no feature model may be refitted on resume.
-    import spacetime_full_feature_comparison as target
+    import feature.spacetime_full_feature_comparison as target
     class Forbidden:
         def __init__(self, *args, **kwargs):
             raise AssertionError("Cached feature candidates must not retrain")
@@ -128,7 +128,7 @@ def test_lightweight_feature_and_spline_gam_combinations(tmp_path):
 
 
 def test_full_cache_rejects_invalid_or_corrupted_candidate(tmp_path):
-    from spacetime_full_feature_comparison import _frame
+    from feature.spacetime_full_feature_comparison import _frame
     sales = _sales().head(12)
     path = tmp_path / "prediction.csv"
     frame = _frame(sales, "2025-08", "feature", "spacetime_splines",

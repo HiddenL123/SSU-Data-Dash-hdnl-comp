@@ -23,7 +23,7 @@ import pandas as pd
 import data
 from models.direct_listing import DirectListingModel
 from models.spacetime_screen_residuals import SpaceTimeResidual
-from spacetime_full_feature_comparison import (
+from feature.spacetime_full_feature_comparison import (
     _feature_spec, _from_cache, _signature, _write_frame,
 )
 from spacetime_full_validation import (
@@ -208,7 +208,7 @@ def compare_list_aware_spline_gam(
     # for fitted single-track monthly snapshots, then explicitly support the
     # old flat mixed-track legacy format without moving those old binaries.
     if catboost_models is None and catboost_model_name is not None:
-        from save_model import load_model, list_saved_models
+        from models.save_model import load_model, list_saved_models
         try:
             catboost_models = load_model(
                 catboost_model_name, track="list_aware"

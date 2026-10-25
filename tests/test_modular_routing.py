@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def notebook_source(name, cell):
-    notebook = json.loads((ROOT / name).read_text(encoding="utf-8"))
+    notebook = json.loads((ROOT / ("experiments/" + name if name in {"interaction.ipynb", "notebook.ipynb"} else name)).read_text(encoding="utf-8"))
     return "".join(notebook["cells"][cell]["source"])
 
 

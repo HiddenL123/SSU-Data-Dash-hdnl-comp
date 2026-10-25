@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 import data
-from models.features import make_features
+from features.features import make_features
 from models.listaware_shotgun_specs import (
     BLENDS, CANDIDATES, DEFAULT_CANDIDATES, parameters,
 )

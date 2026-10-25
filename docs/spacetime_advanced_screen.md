@@ -2,7 +2,7 @@
 
 This branch adds **opt-in** feature families without changing the production
 XGBoost baseline. The existing `SpaceTimeAddon` registry in
-`models/spacetime_screen_features.py` exposes:
+`features/spacetime_screen_features.py` exposes:
 
 - `adaptive_comps`: switches between three chronological comparable-sale
   neighborhoods (0.75, 3, 9 km bandwidths) using eligible sale counts and
@@ -67,7 +67,7 @@ and types, not just the pooled score.
 
 Only after selecting features on prior development folds:
 
-1. Register the winning feature variant in `models/features.make_features`
+1. Register the winning feature variant in `features/features.make_features`
    so `OffMarketModel` can use it without experimental runner code.
 2. Rerun the same expanding-month or fixed-origin validation as the saved
    700-tree XGBoost baseline, with the same splits/hyperparameters.

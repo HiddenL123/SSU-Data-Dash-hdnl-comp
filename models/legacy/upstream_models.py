@@ -10,7 +10,7 @@ deliberately simple, so you can measure how much your own ideas add.
 import numpy as np
 from sklearn.ensemble import HistGradientBoostingRegressor
 
-from models.legacy import upstream_features as features
+from features import upstream_features as features
 
 
 def make_model(track):

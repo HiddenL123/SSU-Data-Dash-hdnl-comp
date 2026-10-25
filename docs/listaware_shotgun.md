@@ -7,7 +7,7 @@ transfer the most successful off-market engineered features into them.
 Entry point: `listaware_shotgun.py`; configurations in
 `models/listaware_shotgun_specs.py`. For an interactive run with automatically
 rendered leaderboards and diagnostics, open
-[`listaware_shotgun.ipynb`](../listaware_shotgun.ipynb).
+[`experiments/listaware_shotgun.ipynb`](../experiments/listaware_shotgun.ipynb).
 
 ## Research candidates
 

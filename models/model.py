@@ -11,7 +11,7 @@ import numpy as np
 from .arima import ArimaResidualModel
 from .boost_regressor import CatBoostRegressor, XGBoostRegressor, LightGBMRegressor
 from .components import adapt_component
-from .features import make_features
+from features.features import make_features
 from .listing import ListingAdjustment
 from .defaults import DEFAULT_PARAMS
 

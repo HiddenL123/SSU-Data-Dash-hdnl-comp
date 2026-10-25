@@ -22,7 +22,7 @@ from sklearn.linear_model import ElasticNetCV
 from sklearn.pipeline import make_pipeline
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 
-import models.basic_features as basic_features
+import features.basic_features as basic_features
 from models.dummy_model import DummyModel
 
 

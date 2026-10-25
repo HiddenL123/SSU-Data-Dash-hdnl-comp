@@ -6,7 +6,7 @@ The last method returns prices; components always predict on the log scale.
 
 ```python
 from models import make_model, DEFAULT_MODELSPECS
-from models.catboost import CatBoostRegressor
+from models.boost_regressor import CatBoostRegressor
 from models.arima import ArimaResidualModel
 
 catboost_only = [(CatBoostRegressor, "Xpt", None)]
@@ -33,9 +33,9 @@ Available adapters:
 
 | Import | Categorical handling |
 | --- | --- |
-| `models.catboost.CatBoostRegressor` | String columns passed as `cat_features` |
-| `models.lightgbm.LGBMRegressor` | Training-fitted pandas categories |
-| `models.xgboost.XGBRegressor` | Training-fitted pandas categories; `enable_categorical=True` |
+| `models.boost_regressor.CatBoostRegressor` | String columns passed as `cat_features` |
+| `models.boost_regressor.LightGBMRegressor` | Training-fitted pandas categories |
+| `models.boost_regressor.XGBoostRegressor` | Training-fitted pandas categories; `enable_categorical=True` |
 | `models.arima.ArimaResidualModel` | Monthly median residuals from listing dates |
 
 Boosting adapters merge kwargs with the original library-specific defaults in
@@ -46,7 +46,7 @@ when comparing them with the repository adapters. Native XGBoost requires
 `component.estimator`; ARIMA diagnostics remain at `component.result.mle_retvals`.
 `off_market.components` contains `(component, provider)` pairs.
 
-Feature providers in `features.py` implement `fit_transform(train)` and
+Feature providers in [`../features/`](../features/) implement `fit_transform(train)` and
 `transform(homes)`:
 
 | Name | Inputs |
@@ -101,12 +101,12 @@ the same CSV, metrics and output paths. `model_run.ipynb` uses the modular facto
 and retains fitted models separately; its reporting function also accepts the
 list of DataFrames produced by older notebook runs.
 
-Both `model_run.ipynb` and `interaction.ipynb` define editable, explicit
+Both `model_run.ipynb` and `experiments/interaction.ipynb` define editable, explicit
 `MODEL_SPECS` lists rather than referencing `DEFAULT_MODELSPECS`. Their initial
 values exactly match the legacy boosting pipeline: 900-iteration CatBoost with
 the original parameters and time-aware features, then ARIMA(1,1,0).
 The notebook validation helper requires specifications to be passed explicitly.
-`notebook.ipynb` only analyzes the resulting CSV and does not fit models.
+`experiments/notebook.ipynb` only analyzes the resulting CSV and does not fit models.
 
 Previous implementations are in `legacy/`. `models.gb_models.make_model`,
 `GBOffMarketModel` and `GBListAwareModel` now route through modular containers
@@ -137,7 +137,7 @@ exactly. This `models/README.md` is separate implementation documentation.
 The original files were restored from commit
 `6c5831e12f523d617eccd1418d46a5cf2a0bb8b4`. The original baseline model and feature
 implementations now live in `models/legacy/upstream_models.py` and
-`models/legacy/upstream_features.py`, avoiding a dependency on removed root files.
+`features/upstream_features.py`, avoiding a dependency on removed root files.
 The routing imports are: `run.py` uses
 `import models.model as models`; the starter tests use
 `import models.upstream as models` to explicitly access the preserved upstream
@@ -161,12 +161,12 @@ python run.py validate
 | --- | --- |
 | `run.py` and `notebooks/quickstart.ipynb` | Original workflows; `run.py` imports `models.model` |
 | `model_run.ipynb` | Modular validation, then writes `outputs/validation_predictions.csv` |
-| `notebook.ipynb` | Reads that same current validation CSV throughout |
-| `interaction.ipynb` | Fits configurable modular baselines for out-of-time residual discovery |
+| `experiments/notebook.ipynb` | Reads that same current validation CSV throughout |
+| `experiments/interaction.ipynb` | Fits configurable modular baselines for out-of-time residual discovery |
 | `models.gb_models` factory and complete predictor classes | Modular containers through `models.boosting` |
 
 The three root notebooks were archived before the routing update under
-`notebooks/legacy/`. Their current versions have cleared stored outputs so old
+`experiments/legacy/`. Their current versions have cleared stored outputs so old
 results cannot be mistaken for results from the new baseline. Run the training
 notebook (or the existing validation CLI) before the analysis notebook.
 

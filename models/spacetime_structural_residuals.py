@@ -11,7 +11,7 @@ from scipy.spatial import cKDTree
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
-from models.spacetime_structural_features import coords
+from features.spacetime_structural_features import coords
 
 
 def local_kernel(calibration, residual, homes, *, same_type=False):

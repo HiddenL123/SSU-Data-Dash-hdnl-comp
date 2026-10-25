@@ -16,9 +16,9 @@ from models.automl_profiles import (
 )
 from models.automl_portable import export_checkpoint, import_checkpoint
 from models.final_ensemble import WeightedOffMarketEnsemble
-from ensemble_automl_factory import FactoryRun, FactorySettings
-from ensemble_release_candidate import finalize_release, predict_release
-import ensemble_release_candidate as release
+from models.ensemble_automl_factory import FactoryRun, FactorySettings
+from models.ensemble_release_candidate import finalize_release, predict_release
+import models.ensemble_release_candidate as release
 import ensemble_rc
 from models.automl_search import Candidate
 from test_starter import make_listings

@@ -5,8 +5,8 @@ import pytest
 
 import models.ensemble_bagging as bags
 from models.ensemble_blending import blend_predictions, score_blends
-import ensemble_feature_bagging_pilot as pilot
-from models.text_features import TextAugmentedFeatures
+import models.ensemble_feature_bagging_pilot as pilot
+from features.text_features import TextAugmentedFeatures
 from test_starter import make_listings
 
 

@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from sklearn.dummy import DummyRegressor
 
-from save_model import (
+from models.save_model import (
     save_model, load_model, model_info,
     list_saved_models, list_model_catalog, save_validation_tracks,
 )
@@ -175,9 +175,9 @@ def test_feature_bagging_pilot_saves_reloadable_offmarket_models(
     tmp_path, monkeypatch,
 ):
     import data
-    import ensemble_feature_bagging_pilot as pilot
+    import models.ensemble_feature_bagging_pilot as pilot
     from models.ensemble_bagging import BagSpec
-    from models.text_features import TextAugmentedFeatures
+    from features.text_features import TextAugmentedFeatures
     from test_starter import make_listings
 
     listings = make_listings(650, seed=41)

@@ -1,7 +1,12 @@
-"""Compatibility import; implementation is in models.legacy.gb_features."""
-from models.legacy.gb_features import *  # noqa: F401,F403
-from models.legacy import gb_features as _legacy
+"""Compatibility alias for :mod:`features.gb_features`."""
+import sys
+from importlib import import_module
 
+_implementation = import_module("features.gb_features")
 
 def __getattr__(name):
-    return getattr(_legacy, name)
+    return getattr(_implementation, name)
+
+def __dir__():
+    return dir(_implementation)
+sys.modules[__name__] = _implementation
