@@ -26,7 +26,7 @@ not from assuming CatBoost feature effects transfer to another family.
 from __future__ import annotations
 
 from models.listaware_shotgun_specs import (
-    BASIC, BINARY, Candidate,
+    BASIC, BINARY, SPATIAL, ADJUSTED, ADVANCED, CANDIDATES, Candidate,
 )
 
 # Only recipes absent from the existing historical catalog are added here.
@@ -61,9 +61,9 @@ EXTRA_CANDIDATES = {
     ),
 }
 
-# Balanced by family, with multiple strong *feature* configurations. Names
-# not in EXTRA_CANDIDATES are defined in feature.listaware_pool_screen's
-# original CATALOG and preserve their existing parameters.
+# Balanced by family, with multiple strong *feature* configurations.
+# The factory's complete curated recipe specifications live HERE, not in the
+# broad, optional comparisons/listaware_pool_screen.py experiment runner.
 CURATED_BY_FAMILY = {
     "catboost": (
         "cat_mae",
@@ -112,3 +112,48 @@ if len(CURATED) != len(set(CURATED)):
     raise RuntimeError("Duplicate curated candidate name")
 if any(name != spec.name for name, spec in EXTRA_CANDIDATES.items()):
     raise RuntimeError("Candidate key/name mismatch")
+
+# Independent, lightweight registry for the production-scale list-aware
+# factory: no imports from experiments/, comparisons/, or feature research.
+# This is intentionally JUST the 20 recipes accepted for consideration,
+# not all 44 configurations screened historically.
+_CURATED_SCREEN_RECIPES = {
+    "cat_mae_spatial_geo": Candidate(
+        "cat_mae_spatial_geo", "catboost", SPATIAL, loss="MAE"
+    ),
+    "cat_mae_spatial_geo_type_quota": Candidate(
+        "cat_mae_spatial_geo_type_quota", "catboost",
+        BINARY + "__comp_type_quota__st_spacetime_splines+geo_context",
+        loss="MAE",
+    ),
+    "cat_mae_binary": Candidate(
+        "cat_mae_binary", "catboost", BINARY, loss="MAE"
+    ),
+    "cat_mae_splines": Candidate(
+        "cat_mae_splines", "catboost",
+        BINARY + "__st_spacetime_splines", loss="MAE"
+    ),
+    "xgb_splines": Candidate(
+        "xgb_splines", "xgboost",
+        BINARY + "__st_spacetime_splines", tuned=True
+    ),
+    "lgb_splines": Candidate(
+        "lgb_splines", "lightgbm",
+        BINARY + "__st_spacetime_splines", tuned=True
+    ),
+    "lgb_advanced": Candidate(
+        "lgb_advanced", "lightgbm", ADVANCED, tuned=True
+    ),
+}
+
+# All remaining entries are the existing recorded experimental specifications
+# or the explicitly curated (previously missing) composite recipes above.
+_CURATED_SOURCES = {**CANDIDATES, **_CURATED_SCREEN_RECIPES, **EXTRA_CANDIDATES}
+CURATED_CATALOG = {name: _CURATED_SOURCES[name] for name in CURATED}
+
+if (len(CURATED_CATALOG) != len(CURATED)
+    or any(spec.name != name for name, spec in CURATED_CATALOG.items())
+    or any(spec.backend != family or spec.target != "ratio"
+           for family, names in CURATED_BY_FAMILY.items()
+           for name in names for spec in (CURATED_CATALOG[name],))):
+    raise RuntimeError("Invalid curated list-aware family/feature registry")
