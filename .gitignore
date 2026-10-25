@@ -14,3 +14,8 @@ venv/
 .DS_Store
 .Rhistory
 report/*.pdf
+
+# Fitted models must be transferred separately, never pushed to GitHub
+saved_models/**/model.joblib
+saved_models/**/metadata.json
+*.checkpoint.zip
