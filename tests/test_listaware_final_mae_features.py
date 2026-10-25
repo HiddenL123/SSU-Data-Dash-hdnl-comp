@@ -97,7 +97,13 @@ def test_frozen_original_cohort_matching():
         sample = original.loc[(original.month == month)
                               & original.variant.eq(WINNER)].copy()
         held[month] = sample[["ml_num", "house_type_name", "sold_price"]].copy()
-    checked = _verified_original_predictions(original, held)
+    # Original geometric blends are sorted by (month, MLS), whereas source
+    # model frames can have arbitrary heldout ordering. Matching must use IDs.
+    reordered = pd.concat([
+        part.sample(frac=1.0, random_state=17)
+        for _, part in original.groupby("variant", sort=False)
+    ], ignore_index=True)
+    checked = _verified_original_predictions(reordered, held)
     assert len(checked) == len(original)
     altered = original.copy()
     ix = altered.loc[altered.variant.eq("lgb_spline_geo")].index[0]
