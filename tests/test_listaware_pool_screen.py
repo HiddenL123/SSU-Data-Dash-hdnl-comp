@@ -35,7 +35,9 @@ def synthetic_sales():
 def test_candidate_catalog_is_factorized_and_complete():
     from features.features import make_features
 
-    assert set(pool.CATALOG) == set(pool.SUITES["all"])
+    assert set(pool.CATALOG) == set(pool.SUITES["all"]).union(
+        pool.SUITES["curated"]
+    )
     assert len(pool.CATALOG) >= 35
     assert {"catboost", "xgboost", "lightgbm"} <= {
         x.backend for x in pool.CATALOG.values()
