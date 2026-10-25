@@ -149,3 +149,31 @@ def test_cache_corruption_not_silently_reused(tmp_path, monkeypatch, synthetic_s
     bad.to_csv(path, index=False)
     with pytest.raises(ValueError, match="stale|Invalid"):
         pool.run(**args)
+
+
+def test_error_correlations_reject_mismatched_keys_and_preserve_interpretation():
+    from listaware_shotgun import _frame
+
+    held = pd.DataFrame({
+        "ml_num": ["a", "b", "c", "d"],
+        "sold_price": [100., 200., 300., 400.],
+        "house_type_name": ["Detached"] * 4,
+    })
+    actual = held.sold_price.to_numpy(float)
+    reference = _frame(held, pd.Period("2025-03"), "model",
+                       "cat_huber_baseline", actual * np.array([.92, 1.06, .9, 1.05]))
+    alternative = _frame(held, pd.Period("2025-03"), "model",
+                         "cat_mae", actual * np.array([1.02, 1.01, 1.05, .98]))
+    frame = pd.concat([reference, alternative], ignore_index=True)
+    diag = pool.error_correlations(frame)
+    assert len(diag) == 1
+    assert set(diag.columns) == {
+        "variant_a", "variant_b", "signed_log_error_correlation"
+    }
+    assert np.isfinite(diag.signed_log_error_correlation).all()
+
+    broken = frame.copy()
+    index = broken.loc[broken.variant.eq("cat_mae")].index[0]
+    broken.loc[index, "sold_price"] += 10
+    with pytest.raises(ValueError, match="Misaligned"):
+        pool.error_correlations(broken)
