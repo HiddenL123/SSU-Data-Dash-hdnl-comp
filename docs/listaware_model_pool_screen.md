@@ -9,6 +9,25 @@ pipeline.
 
 **Python runner:** `feature/listaware_pool_screen.py`
 
+## Curated follow-up (from the latest composite feature experiment)
+
+The `curated` suite is now the preferred **next** list-aware ensemble pool:
+20 candidate model/feature recipes (10 CatBoost / 5 XGBoost / 5 LightGBM),
+including selected-binary spline/geo, full-binary spline/geo, comparable
+quota, XGB splines and LGB advanced alternatives. Refer to
+[the curated pool rationale](listaware_curated_pool.md) for evidence,
+hypotheses and non-duplication rules.
+
+```powershell
+uv run python -m feature.listaware_pool_screen --stage screen --suite curated
+uv run python -m feature.listaware_pool_screen --stage confirm --suite curated --top-k 14 --screen-dir outputs/listaware_pool_screen_curated
+```
+
+Its output directories are separate from `all` to preserve existing cached
+predictions/manifests. Three-family representation is guaranteed for
+**candidate consideration**, not forced ensemble membership. The best
+individual model may still have negligible marginal blending value.
+
 ## What the 44 model configurations explore
 
 A factorized, documented catalog rather than a Cartesian-product search:
