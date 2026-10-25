@@ -84,8 +84,8 @@ def test_screen_resumes_and_confirmation_only_sees_prior_months(
         assert "sold_price" not in hidden
         assert "date_sold" not in hidden
         assert "list_price" in hidden
-        assert all(train.date_sold < hidden.date_listed.max()
-                   + pd.Timedelta(days=33))
+        holdout_month = pd.to_datetime(hidden.date_listed).dt.to_period("M").min()
+        assert (train.date_sold < holdout_month.start_time).all()
         observed.append((spec.name, len(train), len(hidden), tree_cap))
         return hidden.list_price.to_numpy(float) * (1.0 + .002 * len(spec.name))
 
