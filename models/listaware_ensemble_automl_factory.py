@@ -1,4 +1,4 @@
-"""Resumable, chronological, diversity-aware XGBoost ensemble AutoML (v1).
+"""Resumable LIST-AWARE CatBoost/XGBoost/LightGBM ensemble AutoML (v1).
 
 Run from ensemble_starter.ipynb (opt-in). Requires optional 'optuna'.
 No model ever fits on the candidate's validation labels. Separate folds:
@@ -26,42 +26,44 @@ from models.automl_checkpoint import (
 )
 from models.automl_portable import export_checkpoint
 from models.automl_search import (
-    Candidate, choose_admission, generate_candidates, log_blend,
-    metrics, objective, updated_weights,
+    choose_admission, log_blend, metrics, objective, updated_weights,
 )
+from models.listaware_factory_search import Candidate, generate_candidates
+from models.listaware_shotgun_specs import parameters as listaware_parameters
+from feature.listaware_pool_screen import CATALOG as LISTAWARE_CATALOG
+from models.listaware_factory_snapshot import ListAwareBaggedMember, ListAwareFactoryEnsemble
 from models.ensemble_bagging import (
     BagSpec, build_text_bank, sample_training_rows, select_text_terms,
 )
-from models.ensemble_snapshot import BaggedMember, FeatureBaggingEnsemble
 from features.features import make_features
 from features.text_features import TextAugmentedFeatures
 from models.save_model import model_info, save_model
-from spacetime_fast import XGB_TUNED, _cap, _make_estimator
+from spacetime_fast import _cap
 
 VERSION = 1
 
 
 @dataclass(frozen=True)
 class FactorySettings:
-    tuning_months: tuple[str, ...] = ("2025-03", "2025-04")
-    selection_months: tuple[str, ...] = ("2025-05", "2025-06")
-    audit_months: tuple[str, ...] = ("2025-07", "2025-08")
-    train_start: str = "2022-01-01"
-    train_cap: int = 5000
-    validation_cap: int = 250
-    trees: int = 220
+    tuning_months: tuple[str, ...] = ("2025-04", "2025-05")
+    selection_months: tuple[str, ...] = ("2025-06", "2025-07")
+    audit_months: tuple[str, ...] = ("2025-08", "2025-09", "2025-10")
+    train_start: str = "1900-01-01"
+    train_cap: int = 200000
+    validation_cap: int = 100000
+    trees: int = 700
     max_extra_terms: int = 1000
     min_df: int = 10
-    candidates_per_generation: int = 2
-    generations: int = 1
-    optuna_trials: int = 2
+    candidates_per_generation: int = 3
+    generations: int = 2
+    optuna_trials: int = 5
     minimum_ensemble_gain_pp: float = 0.02
     max_mape_regression_pp: float = 0.03
     max_members: int = 8
     seed: int = 42
-    output_dir: str = "outputs/ensemble_automl_factory_v1"
+    output_dir: str = "outputs/listaware_ensemble_factory_v1"
     save_accepted_snapshots: bool = False
-    screen_max_mdape: float = 22.0  # crude catastrophic-model prefilter only
+    screen_max_mdape: float = 15.0  # crude catastrophic-model prefilter only
 
     def __post_init__(self):
         months = [
@@ -105,8 +107,18 @@ def _text_provider(provider):
 
 
 def _feature_name(candidate):
-    suffix = "__st_" + "+".join(candidate.addons) if candidate.addons else ""
-    return "Xpt_spatiotemporal__full_binary" + suffix
+    """Fit a full binary text bank, bag its terms, retain recipe comp/spatial."""
+    name = LISTAWARE_CATALOG[candidate.recipe].feature_name
+    prefix = "Xpt_spatiotemporal"
+    if not name.startswith(prefix):
+        raise ValueError("List-aware candidate requires comparable feature base")
+    suffix = name[len(prefix):]
+    for rep in ("__selected_binary", "__selected_tfidf", "__full_binary",
+                "__full_tfidf", "__full_count", "__no_text"):
+        if rep in suffix:
+            suffix = suffix.replace(rep, "", 1)
+            break
+    return prefix + "__full_binary" + suffix
 
 
 class FactoryRun:
@@ -131,12 +143,23 @@ class FactoryRun:
         self.sales["date_listed"] = pd.to_datetime(self.sales.date_listed)
         self.sales["date_sold"] = pd.to_datetime(self.sales.date_sold)
         self.sale_months = self.sales.date_sold.dt.to_period("M")
+        values = self.sales[["sold_price", "list_price"]].to_numpy(float)
+        if not np.isfinite(values).all() or (values <= 0).any():
+            raise ValueError("Sale and list prices must be finite and positive")
         if self.sales.ml_num.astype(str).duplicated().any():
             raise ValueError("Monthly inputs require unique MLS identifiers")
         # Do NOT overwrite or bypass an incompatible Colab checkpoint.
         # The original v1 hash algorithm is intentionally preserved.
         from models.automl_manifest import compute_manifest, compare_manifests
-        setup = compute_manifest(self.cfg, self.sales, XGB_TUNED, version=VERSION)
+        setup = compute_manifest(
+            self.cfg, self.sales,
+            {"target": "log(sold/list)", "model_families": [
+                "catboost", "xgboost", "lightgbm"
+            ], "candidate_recipes": {
+                name: asdict(v) for name, v in LISTAWARE_CATALOG.items()
+            }},
+            version=VERSION,
+        )
         path = self.root / "manifest.json"
         if path.is_file():
             saved = json.loads(path.read_text(encoding="utf-8"))
@@ -159,10 +182,51 @@ class FactoryRun:
         events_file = self.root / "events.json"
         self.events = json.loads(events_file.read_text(encoding="utf-8")) if events_file.is_file() else []
 
-    def _new_estimator(self, params, seed):
-        model = _make_estimator(params, self.cfg.trees)
-        model.set_params(n_jobs=self.runtime_threads, random_state=seed)
-        return model
+    def _base_params(self, candidate):
+        spec = LISTAWARE_CATALOG[candidate.recipe]
+        if spec.backend != candidate.family or spec.target != "ratio":
+            raise ValueError("Incompatible estimator family or target")
+        return listaware_parameters(
+            spec, trees=self.cfg.trees, threads=self.runtime_threads
+        )
+
+    def _new_estimator(self, params, candidate):
+        from catboost import CatBoostRegressor
+        from xgboost import XGBRegressor
+        from lightgbm import LGBMRegressor
+        config = dict(params)
+        if candidate.family == "catboost":
+            config.update(thread_count=self.runtime_threads,
+                          random_seed=candidate.seed, verbose=False,
+                          allow_writing_files=False)
+            return CatBoostRegressor(**config)
+        if candidate.family == "xgboost":
+            config.update(n_jobs=self.runtime_threads,
+                          random_state=candidate.seed, device="cpu")
+            return XGBRegressor(**config)
+        config.update(n_jobs=self.runtime_threads,
+                      random_state=candidate.seed)
+        return LGBMRegressor(**config)
+
+    @staticmethod
+    def _fit_estimator(model, candidate, fold):
+        if candidate.family == "catboost":
+            categorical = fold["X"].select_dtypes(
+                include=["object", "string", "category"]
+            ).columns.tolist()
+            model.fit(fold["X"], fold["y"], cat_features=categorical)
+        else:
+            model.fit(fold["X"], fold["y"])
+
+    @staticmethod
+    def _reconstruct(fold, model):
+        result = fold["listed"] * np.exp(
+            fold["offset"] + np.asarray(model.predict(fold["H"]), float).reshape(-1)
+        )
+        if (result.shape != fold["listed"].shape or
+            not np.isfinite(result).all() or (result <= 0).any()):
+            raise ValueError("Invalid ratio-model reconstructed prices")
+        return result
 
     def _backup(self):
         # Called only from methods holding exclusive_factory_lock(root).
@@ -204,14 +268,14 @@ class FactoryRun:
         )
         terms = select_text_terms(bank, bag)
         provider = make_features(
-            _feature_name(candidate), model="xgboost", track="off_market"
+            _feature_name(candidate), model=candidate.family, track="list_aware"
         )
         text = _text_provider(provider)
         if text is None:
             raise RuntimeError("Expected training-fitted binary BoW provider")
         text.terms = tuple(bank)
         X = provider.fit_transform(train)
-        hidden = data.hide_answers(held, "off_market")
+        hidden = data.hide_answers(held, "list_aware")
         H = provider.transform(hidden)
         if not X.columns.equals(H.columns):
             raise ValueError("Training/holdout features not aligned")
@@ -222,13 +286,15 @@ class FactoryRun:
             *(inverse[term] for term in terms),
         ]
         row_ids = sample_training_rows(len(train), bag)
-        target = np.log(train.sold_price.to_numpy(dtype=float))
+        target = (np.log(train.sold_price.to_numpy(dtype=float))
+                  - np.log(train.list_price.to_numpy(dtype=float)))
         offset = float(np.median(target))
         fold = {
             "month": str(month),
             "X": X.iloc[row_ids][columns],
             "y": target[row_ids] - offset,
             "H": H[columns],
+            "listed": held.list_price.to_numpy(dtype=float),
             "offset": offset,
             "held": held,
             "truth": held.sold_price.to_numpy(dtype=float),
@@ -304,11 +370,9 @@ class FactoryRun:
             raise ValueError(f"Stale/misaligned member cache: {dest}")
 
         fold = self._prepare_fold(candidate, month)
-        model = self._new_estimator(params, candidate.seed)
-        model.fit(fold["X"], fold["y"])
-        predicted = np.exp(
-            fold["offset"] + np.asarray(model.predict(fold["H"]), dtype=float)
-        )
+        model = self._new_estimator(params, candidate)
+        self._fit_estimator(model, candidate, fold)
+        predicted = self._reconstruct(fold, model)
         metrics(fold["truth"], predicted)  # validate positive finite
         if cache:
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -350,50 +414,78 @@ class FactoryRun:
         return candidate
 
     def _tune(self, candidate):
+        """Off-market's resumable Optuna protocol with backend-specific ranges."""
         try:
             import optuna
         except ImportError as exc:
-            raise ImportError(
-                "Install optuna (pip install optuna) to run the AutoML factory"
-            ) from exc
+            raise ImportError("Install optuna (uv run --with optuna ...)") from exc
         folder = self.root / "optuna"
         folder.mkdir(exist_ok=True)
         storage = f"sqlite:///{(folder / 'studies.db').resolve().as_posix()}"
         study = optuna.create_study(
-            study_name=f"factory_v{VERSION}_{candidate.name}",
+            study_name=f"listaware_factory_v{VERSION}_{candidate.name}",
             storage=storage, direction="minimize", load_if_exists=True,
             sampler=optuna.samplers.TPESampler(seed=self.cfg.seed + candidate.seed),
             pruner=optuna.pruners.MedianPruner(n_startup_trials=3),
         )
+        base = self._base_params(candidate)
+        if candidate.family == "catboost":
+            keys = ("depth", "learning_rate", "l2_leaf_reg")
+        elif candidate.family == "xgboost":
+            keys = ("max_depth", "min_child_weight", "learning_rate",
+                    "reg_lambda", "subsample", "colsample_bytree")
+        else:
+            keys = ("max_depth", "num_leaves", "min_child_samples",
+                    "learning_rate", "reg_lambda", "colsample_bytree")
         if not study.trials:
-            study.enqueue_trial({
-                "max_depth": XGB_TUNED["max_depth"],
-                "min_child_weight": XGB_TUNED["min_child_weight"],
-                "learning_rate": XGB_TUNED["learning_rate"],
-                "reg_lambda": XGB_TUNED["reg_lambda"],
-                "subsample": XGB_TUNED["subsample"],
-                "colsample_bytree": XGB_TUNED["colsample_bytree"],
-            })
+            study.enqueue_trial({key: base[key] for key in keys if key in base})
+
         def trial_objective(trial):
-            params = {
-                "max_depth": trial.suggest_int("max_depth", 4, 10),
-                "min_child_weight": trial.suggest_float(
-                    "min_child_weight", 1.0, 35.0
-                ),
-                "learning_rate": trial.suggest_float(
-                    "learning_rate", .03, .16, log=True
-                ),
-                "reg_lambda": trial.suggest_float(
-                    "reg_lambda", 1.0, 50.0, log=True
-                ),
-                "subsample": trial.suggest_float("subsample", .75, 1.0),
-                "colsample_bytree": trial.suggest_float(
-                    "colsample_bytree", .70, 1.0
-                ),
-            }
-            # Fold-level score cache is keyed by FULL model hyperparameters.
-            # Failed or interrupted Optuna trials can be re-queued with the
-            # same values. Completed folds are then reused exactly.
+            if candidate.family == "catboost":
+                changes = {
+                    "depth": trial.suggest_int("depth", 4, 10),
+                    "learning_rate": trial.suggest_float(
+                        "learning_rate", .025, .16, log=True
+                    ),
+                    "l2_leaf_reg": trial.suggest_float(
+                        "l2_leaf_reg", 1., 40., log=True
+                    ),
+                }
+            elif candidate.family == "xgboost":
+                changes = {
+                    "max_depth": trial.suggest_int("max_depth", 4, 10),
+                    "min_child_weight": trial.suggest_float(
+                        "min_child_weight", 1., 35.
+                    ),
+                    "learning_rate": trial.suggest_float(
+                        "learning_rate", .03, .16, log=True
+                    ),
+                    "reg_lambda": trial.suggest_float(
+                        "reg_lambda", 1., 50., log=True
+                    ),
+                    "subsample": trial.suggest_float("subsample", .75, 1.),
+                    "colsample_bytree": trial.suggest_float(
+                        "colsample_bytree", .70, 1.
+                    ),
+                }
+            else:
+                changes = {
+                    "max_depth": trial.suggest_int("max_depth", 4, 10),
+                    "num_leaves": trial.suggest_int("num_leaves", 20, 80),
+                    "min_child_samples": trial.suggest_int(
+                        "min_child_samples", 15, 90
+                    ),
+                    "learning_rate": trial.suggest_float(
+                        "learning_rate", .025, .16, log=True
+                    ),
+                    "reg_lambda": trial.suggest_float(
+                        "reg_lambda", 1., 50., log=True
+                    ),
+                    "colsample_bytree": trial.suggest_float(
+                        "colsample_bytree", .70, 1.
+                    ),
+                }
+            params = {**base, **changes}
             trial_key = hashlib.sha256(
                 json.dumps(params, sort_keys=True).encode("utf-8")
             ).hexdigest()[:20]
@@ -405,25 +497,21 @@ class FactoryRun:
                 )
                 if score_path.is_file():
                     stored = json.loads(score_path.read_text(encoding="utf-8"))
+                    if (stored.get("candidate") != candidate.record() or
+                        stored.get("parameters") != params):
+                        raise ValueError(f"Stale Optuna fold cache: {score_path}")
                     score = float(stored["objective"])
                     if not np.isfinite(score):
-                        raise ValueError(f"Nonfinite saved Optuna fold score: {score_path}")
+                        raise ValueError("Nonfinite cached Optuna score")
                 else:
-                    # Historical features are fitted on this fold's eligible
-                    # training sales only, never on current/future outcomes.
                     fold = self._prepare_fold(candidate, month)
-                    model = self._new_estimator(
-                        {**XGB_TUNED, **params}, candidate.seed
-                    )
-                    model.fit(fold["X"], fold["y"])
-                    prices = np.exp(
-                        fold["offset"] + np.asarray(model.predict(fold["H"]), float)
-                    )
+                    model = self._new_estimator(params, candidate)
+                    self._fit_estimator(model, candidate, fold)
+                    prices = self._reconstruct(fold, model)
                     score = float(objective(fold["truth"], prices))
                     write_json(score_path, {
-                        "candidate": candidate.name,
-                        "month": str(month),
-                        "parameters": params,
+                        "candidate": candidate.record(),
+                        "month": str(month), "parameters": params,
                         "objective": score,
                     })
                     self._backup()
@@ -433,30 +521,16 @@ class FactoryRun:
                     raise optuna.TrialPruned()
             return float(np.mean(scores))
 
-        # After Ctrl+C or an OS/process kill, Optuna can retain RUNNING
-        # trials in SQLite. Single-writer lock guarantees none are active
-        # here; reclassify orphan trials as interrupted and retry their
-        # budget instead of counting them as completed.
+        # Preserve the off-market factory's killed-trial recovery protocol.
         for trial in study.trials:
             if trial.state == optuna.trial.TrialState.RUNNING:
-                study.tell(
-                    trial.number, state=optuna.trial.TrialState.FAIL
-                )
-                # Rerun the very same hyperparameters, not a newly drawn
-                # trial. Fold scores already written before the interruption
-                # can be reused from the exact-parameter cache above.
+                study.tell(trial.number, state=optuna.trial.TrialState.FAIL)
                 if trial.params:
                     study.enqueue_trial(dict(trial.params))
-                print(
-                    f"  Recovering interrupted Optuna trial #{trial.number} "
-                    f"for {candidate.name}",
-                    flush=True,
-                )
+                print(f"Recovering interrupted Optuna trial #{trial.number}", flush=True)
         finished = sum(
-            trial.state in (
-                optuna.trial.TrialState.COMPLETE,
-                optuna.trial.TrialState.PRUNED,
-            ) for trial in study.trials
+            t.state in (optuna.trial.TrialState.COMPLETE,
+                        optuna.trial.TrialState.PRUNED) for t in study.trials
         )
         remaining = max(0, self.cfg.optuna_trials - finished)
         if remaining:
@@ -464,50 +538,44 @@ class FactoryRun:
                 trial_objective, n_trials=remaining, n_jobs=1,
                 callbacks=[lambda study, trial: self._backup()],
             )
-        complete = [
-            trial for trial in study.trials
-            if trial.state == optuna.trial.TrialState.COMPLETE
-        ]
+        complete = [t for t in study.trials
+                    if t.state == optuna.trial.TrialState.COMPLETE]
         if not complete:
-            raise RuntimeError(f"No successful Optuna trial for {candidate.name}")
-        params = {**XGB_TUNED, **study.best_params}
-        return params, float(study.best_value)
+            raise RuntimeError(f"No completed Optuna trials: {candidate.name}")
+        return {**base, **study.best_params}, float(study.best_value)
 
     def _save_member(self, candidate, params):
-        """Save refitted individual model at fixed selection cutoff; never audit."""
-        name = f"factory_v{VERSION}_{candidate.name}"
+        """Optional pre-audit member snapshot with a fitted list-aware provider."""
+        name = f"listaware_factory_v{VERSION}_{candidate.name}"
         try:
-            existing = model_info(name, track="off_market")
+            existing = model_info(name, track="list_aware")
         except FileNotFoundError:
             existing = None
         if existing is not None:
             meta = existing.get("metadata", {})
-            if (json.dumps(meta.get("candidate"), sort_keys=True) !=
-                json.dumps(candidate.record(), sort_keys=True) or
-                meta.get("parameters") != params):
-                raise ValueError("Saved model name already belongs to different configuration")
+            if (meta.get("candidate") != candidate.record()
+                or meta.get("parameters") != params):
+                raise ValueError("Existing snapshot belongs to another model")
             return
         cutoff = self.cfg.audit_months[0]
         fold = self._prepare_fold(candidate, cutoff)
-        # IMPORTANT: fold training history strictly precedes audit first month.
-        model = self._new_estimator(params, candidate.seed)
-        model.fit(fold["X"], fold["y"])
-        bundle = FeatureBaggingEnsemble(
-            fold["provider"],
-            {candidate.name: BaggedMember(
-                name=candidate.name, estimator=model,
-                selected_columns=fold["cols"],
-                target_offset=fold["offset"],
-                terms=fold["terms"], settings=candidate.record()
-            )}
+        model = self._new_estimator(params, candidate)
+        self._fit_estimator(model, candidate, fold)
+        member = ListAwareBaggedMember(
+            name=candidate.name, estimator=model,
+            feature_provider=fold["provider"],
+            selected_columns=fold["cols"], target_offset=fold["offset"],
+            terms=fold["terms"], settings=candidate.record(),
         )
-        save_model(bundle, name, track="off_market", metadata={
+        bundle = ListAwareFactoryEnsemble(
+            {candidate.name: member}, {candidate.name: 1.}
+        )
+        save_model(bundle, name, track="list_aware", metadata={
             "candidate": candidate.record(), "parameters": params,
-            "target": "log(sold_price)", "frozen_as_of": str(cutoff),
-            "source_factory_dir": str(self.root), "model_type": "AutoMLCandidate",
-            "warning": "Development-period model; not full 700-tree production fit",
+            "target": "log(sold/list)", "frozen_as_of": str(cutoff),
+            "source_factory_dir": str(self.root),
+            "warning": "Pre-audit development snapshot, not full-history refit",
         })
-        print(f"  Saved fitted member: saved_models/off_market/{name}", flush=True)
 
     def _progress(self, stage, candidate=None, **details):
         """Small atomic status view, not a second source of truth."""
@@ -635,7 +703,7 @@ class FactoryRun:
                 self._progress("screening", candidate, generation=generation)
                 t0 = perf_counter()
                 # Stage A: cheap untuned screen on FIRST earlier tuning fold.
-                baseline_params = dict(XGB_TUNED)
+                baseline_params = self._base_params(candidate)
                 from_time = self._predict_fold(
                     candidate, self.cfg.tuning_months[0], baseline_params,
                     fold_name="screen",
@@ -772,6 +840,98 @@ class FactoryRun:
         )
         return outcome, pd.DataFrame(self.events), current
 
+    def finalize(self, *, model_name="listaware_factory_selected"):
+        """Refit the frozen accepted roster on full legally eligible history.
+
+        Audit must already have been opened and locked. Each member retains
+        its own training-fitted feature provider and sampled text/row bag.
+        """
+        with exclusive_factory_lock(self.root):
+            lock_path = self.root / "shadow_audit_lock.json"
+            roster_path = self.root / "roster.json"
+            if not lock_path.is_file() or not roster_path.is_file():
+                raise RuntimeError("Complete selection and audit before finalizing")
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            roster = json.loads(roster_path.read_text(encoding="utf-8"))
+            checksum = hashlib.sha256(
+                json.dumps(roster, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            if lock.get("status") != "complete" or lock.get("roster_sha256") != checksum:
+                raise RuntimeError("Audit incomplete or roster changed after audit")
+            cutoff = pd.Timestamp("2026-06-01")
+            train = self.sales.loc[
+                (self.sales.date_sold >= pd.Timestamp(self.cfg.train_start))
+                & (self.sales.date_sold < cutoff)
+            ].copy()
+            if train.empty:
+                raise RuntimeError("No legally eligible completed sales")
+            bank = build_text_bank(
+                train, max_extra_terms=self.cfg.max_extra_terms,
+                min_df=self.cfg.min_df,
+            )
+            members, weights = {}, {}
+            for record in roster["members"]:
+                candidate = Candidate(**record["candidate"])
+                bag = BagSpec(
+                    name=candidate.name, seed=candidate.seed,
+                    text_mode=candidate.text_mode, n_text=candidate.n_text,
+                    selected_weight=candidate.selected_weight,
+                    row_mode=candidate.row_mode,
+                    row_fraction=candidate.row_fraction,
+                )
+                terms = select_text_terms(bank, bag)
+                provider = make_features(
+                    _feature_name(candidate), model=candidate.family,
+                    track="list_aware",
+                )
+                text = _text_provider(provider)
+                if text is None:
+                    raise RuntimeError("Missing fitted full BoW bank")
+                text.terms = tuple(bank)
+                X = provider.fit_transform(train)
+                if not X.index.equals(train.index):
+                    raise ValueError("Fitted provider reordered training rows")
+                text_cols = text.text_feature_names
+                inverse = {term: col for col, term in text_cols.items()}
+                columns = tuple([
+                    *(col for col in X.columns if col not in text_cols),
+                    *(inverse[term] for term in terms),
+                ])
+                sampled = sample_training_rows(len(train), bag)
+                ratio = (np.log(train.sold_price.to_numpy(float))
+                         - np.log(train.list_price.to_numpy(float)))
+                offset = float(np.median(ratio))
+                fold = {
+                    "X": X.iloc[sampled][list(columns)],
+                    "y": ratio[sampled] - offset,
+                }
+                model = self._new_estimator(record["parameters"], candidate)
+                self._fit_estimator(model, candidate, fold)
+                members[candidate.name] = ListAwareBaggedMember(
+                    name=candidate.name, estimator=model,
+                    feature_provider=provider, selected_columns=columns,
+                    target_offset=offset, terms=tuple(terms),
+                    settings=candidate.record(),
+                )
+                weights = updated_weights(
+                    weights, candidate.name, record["admitted_alpha"]
+                )
+                print(f"Full-history member fitted: {candidate.name}", flush=True)
+            package = ListAwareFactoryEnsemble(
+                members, weights, metadata={
+                    "cutoff_exclusive": str(cutoff.date()),
+                    "training_rows": len(train),
+                    "roster_sha256": checksum,
+                    "source_factory_dir": str(self.root),
+                },
+            )
+            location = save_model(
+                package, model_name, track="list_aware",
+                metadata=package.metadata,
+            )
+            print("Saved list-aware model:", location, flush=True)
+            return location
+
     def audit(self):
         with exclusive_factory_lock(self.root):
             return self._audit_locked()
@@ -902,7 +1062,7 @@ class FactoryRun:
         print("Frozen shadow audit:", audit_score, flush=True)
         return selection, results
 
-def run_automl_factory(*, listings=None, **kwargs):
+def run_listaware_factory(*, listings=None, **kwargs):
     """Notebook entry point. Named kwargs are FactorySettings constructor args."""
     runtime_threads = kwargs.pop("runtime_threads", None)
     checkpoint_archive = kwargs.pop("checkpoint_archive", None)
@@ -914,7 +1074,7 @@ def run_automl_factory(*, listings=None, **kwargs):
 
 
 
-def run_automl_shadow_audit(*, listings=None, **kwargs):
+def run_listaware_shadow_audit(*, listings=None, **kwargs):
     """Opt-in one-time audit of a previously frozen factory selection."""
     runtime_threads = kwargs.pop("runtime_threads", None)
     checkpoint_archive = kwargs.pop("checkpoint_archive", None)
@@ -923,3 +1083,12 @@ def run_automl_shadow_audit(*, listings=None, **kwargs):
         runtime_threads=runtime_threads,
         checkpoint_archive=checkpoint_archive,
     ).audit()
+
+def finalize_listaware_factory(*, listings=None, model_name="listaware_factory_selected", **kwargs):
+    runtime_threads = kwargs.pop("runtime_threads", None)
+    checkpoint_archive = kwargs.pop("checkpoint_archive", None)
+    return FactoryRun(
+        FactorySettings(**kwargs), listings=listings,
+        runtime_threads=runtime_threads,
+        checkpoint_archive=checkpoint_archive,
+    ).finalize(model_name=model_name)
