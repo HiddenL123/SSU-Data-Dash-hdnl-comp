@@ -166,7 +166,7 @@ def predict():
         ),
         save_dir=os.environ.get("SAVED_MODELS_DIR") or None,
     )
-    serving.load()  # Fail before writing if either snapshot is unavailable.
+    # Load each large ensemble only for its own track; avoid retaining both.
     prepared, expected_ids = {}, {}
     for track in TRACKS:
         homes = data.load(track)
@@ -178,7 +178,10 @@ def predict():
         if ids.duplicated().any():
             raise ValueError(f"{track}: duplicate ml_num")
         hidden = data.hide_answers(homes, track)
-        predictions = serving.predict(track, hidden)
+        try:
+            predictions = serving.predict(track, hidden)
+        finally:
+            serving.for_track(track).unload()
         rounded = np.rint(predictions)
         if (not np.isfinite(rounded).all()
                 or (rounded <= 0).any()
