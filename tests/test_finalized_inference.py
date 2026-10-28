@@ -173,6 +173,11 @@ def test_run_predict_generates_both_competition_files(stored_models, tmp_path, m
 
 
 def test_no_partial_submission_when_second_model_missing(stored_models, tmp_path, monkeypatch):
+    def load(track):
+        if track == "off_market":
+            return pd.DataFrame({"ml_num": ["a"]})
+        raise AssertionError("The second model should fail before test data is read")
+    monkeypatch.setattr(run.data, "load", load)
     monkeypatch.setattr(run, "ROOT", tmp_path)
     monkeypatch.setenv("SAVED_MODELS_DIR", str(stored_models))
     monkeypatch.setenv("LIST_AWARE_MODEL_NAME", "does_not_exist")
