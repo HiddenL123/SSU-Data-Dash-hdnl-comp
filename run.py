@@ -1,8 +1,8 @@
 """Run the whole pipeline. From this folder:
 
-    python run.py validate   test the models on the last six months of sales
+    python run.py validate   test the ORIGINAL baselines chronologically
     python run.py report     score those predictions and draw a figure
-    python run.py predict    predict the test homes and write the two submission files
+    python run.py predict    load both finalized ensembles and write submissions
     python run.py check      check the submission files before you hand them in
 
 On Windows, type py instead of python if python is not found.
@@ -151,15 +151,60 @@ def error_by_price_range(predictions):
 
 
 def predict():
-    listings = data.load("listings")
-    (ROOT / "submissions").mkdir(exist_ok=True)
+    """Write both submissions using trusted, fitted models (no retraining)."""
+    import os
+    import tempfile
+    from models.ensemble_serving import EnsembleServingInterface
+    from check_submission import check_file
+
+    serving = EnsembleServingInterface(
+        off_market_name=os.environ.get(
+            "OFF_MARKET_MODEL_NAME", "off_market_release_candidate_full"
+        ),
+        list_aware_name=os.environ.get(
+            "LIST_AWARE_MODEL_NAME", "list_aware_ensemble_v1"
+        ),
+        save_dir=os.environ.get("SAVED_MODELS_DIR") or None,
+    )
+    serving.load()  # Fail before writing if either snapshot is unavailable.
+    prepared, expected_ids = {}, {}
     for track in TRACKS:
         homes = data.load(track)
-        model = models.make_model(track).fit(listings)
-        predicted = model.predict(homes)
-        path = ROOT / "submissions" / f"submission_{track}.csv"
-        pd.DataFrame({"ml_num": homes["ml_num"], "predicted_price": np.round(predicted)}).to_csv(path, index=False)
-        print(f"Wrote {path.relative_to(ROOT)} ({len(homes):,} homes)")
+        if homes.empty or "ml_num" not in homes.columns:
+            raise ValueError(f"{track}: expected nonempty homes with ml_num")
+        if homes["ml_num"].isna().any():
+            raise ValueError(f"{track}: missing ml_num")
+        ids = homes["ml_num"].astype(str)
+        if ids.duplicated().any():
+            raise ValueError(f"{track}: duplicate ml_num")
+        hidden = data.hide_answers(homes, track)
+        predictions = serving.predict(track, hidden)
+        rounded = np.rint(predictions)
+        if (not np.isfinite(rounded).all()
+                or (rounded <= 0).any()
+                or (rounded > np.iinfo(np.int64).max).any()):
+            raise ValueError(f"{track}: invalid rounded predicted prices")
+        prepared[track] = pd.DataFrame({
+            "ml_num": ids.to_numpy(),
+            "predicted_price": rounded.astype(np.int64),
+        })
+        expected_ids[track] = ids
+
+    output = ROOT / "submissions"
+    output.mkdir(parents=True, exist_ok=True)
+    # Validate BOTH staged CSVs before replacing either final output.
+    with tempfile.TemporaryDirectory(prefix=".submission_", dir=output) as temp_dir:
+        temp = Path(temp_dir)
+        for track in TRACKS:
+            path = temp / f"submission_{track}.csv"
+            prepared[track].to_csv(path, index=False)
+            issues = check_file(path, expected_ids[track])
+            if issues:
+                raise ValueError(f"{track}: {'; '.join(issues)}")
+        for track in TRACKS:
+            path = output / f"submission_{track}.csv"
+            (temp / path.name).replace(path)
+            print(f"Wrote {path.relative_to(ROOT)} ({len(prepared[track]):,} homes)")
 
 
 def check():
