@@ -56,6 +56,12 @@ class SpaceTimeAddon:
         self.fill_coords = None
         self.column_names_ = None
 
+    def __setstate__(self, state):
+        """Default optional add-ons absent from older joblib snapshots."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("realworld", None)
+        self.__dict__.setdefault("advanced", None)
+
     def fit(self, train):
         if self.advanced is not None:
             self.advanced.fit(train)
