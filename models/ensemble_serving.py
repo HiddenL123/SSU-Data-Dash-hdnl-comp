@@ -88,6 +88,11 @@ class TrainedEnsembleModel:
             self._model, self._info = fitted, info
         return self
 
+    def unload(self):
+        """Release loaded estimator/provider objects between large track runs."""
+        self._model = None
+        self._info = None
+
     @property
     def metadata(self):
         self.load()
