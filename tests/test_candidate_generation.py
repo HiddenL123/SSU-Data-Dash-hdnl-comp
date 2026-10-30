@@ -36,9 +36,9 @@ def test_listaware_generator_not_restricted_to_curated_recipes():
 def test_bad_generator_configuration_rejected():
     with pytest.raises(ValueError, match="family"):
         Candidate("bad", 1, family="unrecognized")
-    with pytest.raises(ValueError, match="objective"):
+    with pytest.raises(ValueError, match="RMSE"):
         Candidate("bad", 1, family="xgboost", objective="MAE")
-    with pytest.raises(ValueError, match="row fraction"):
+    with pytest.raises(ValueError, match="Invalid row fraction"):
         Candidate("bad", 1, row_fraction=0)
 
 
