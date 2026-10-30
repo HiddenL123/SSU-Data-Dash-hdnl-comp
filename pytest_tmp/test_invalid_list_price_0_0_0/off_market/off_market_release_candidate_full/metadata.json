@@ -1,0 +1,21 @@
+{
+  "format_version": 1,
+  "name": "off_market_release_candidate_full",
+  "storage_track": "off_market",
+  "saved_at_utc": "2026-10-30T00:52:30+00:00",
+  "python_version": "3.13.11",
+  "package_versions": {
+    "joblib": "1.6.0",
+    "catboost": "1.2.10",
+    "scikit-learn": "1.7.2",
+    "pandas": "2.3.3",
+    "numpy": "2.2.6",
+    "statsmodels": "0.15.0"
+  },
+  "model_structure": {
+    "type": "models.final_ensemble.WeightedOffMarketEnsemble"
+  },
+  "metadata": {
+    "track": "off_market"
+  }
+}
