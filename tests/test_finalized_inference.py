@@ -176,7 +176,9 @@ def test_no_partial_submission_when_second_model_missing(stored_models, tmp_path
     def load(track):
         if track == "off_market":
             return pd.DataFrame({"ml_num": ["a"]})
-        raise AssertionError("The second model should fail before test data is read")
+        if track == "list_aware":
+            return pd.DataFrame({"ml_num": ["x"], "list_price": [100.]})
+        raise AssertionError("Submission inference must not load training data")
     monkeypatch.setattr(run.data, "load", load)
     monkeypatch.setattr(run, "ROOT", tmp_path)
     monkeypatch.setenv("SAVED_MODELS_DIR", str(stored_models))
@@ -184,6 +186,7 @@ def test_no_partial_submission_when_second_model_missing(stored_models, tmp_path
     with pytest.raises(FileNotFoundError):
         run.predict()
     assert not (tmp_path / "submissions" / "submission_off_market.csv").exists()
+    assert not (tmp_path / "submissions" / "submission_list_aware.csv").exists()
 
 
 def test_invalid_listaware_submission_does_not_overwrite_other(stored_models, tmp_path, monkeypatch):
