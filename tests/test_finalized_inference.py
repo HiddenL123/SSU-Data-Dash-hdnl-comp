@@ -209,3 +209,14 @@ def test_validate_remains_chronological_baseline_only():
     source = inspect.getsource(run.validate)
     assert "models.make_model(track).fit(train)" in source
     assert "EnsembleServingInterface" not in source
+
+def test_frozen_pickle_resolves_legacy_gb_features_global():
+    """Old frozen models may reference this module path in their pickle data."""
+    import pickle
+    from features.gb_features import BoostingFeatures
+
+    # Protocol-0 GLOBAL opcode, as if persisted before models/legacy moved.
+    restored_class = pickle.loads(
+        b"cmodels.legacy.gb_features\\nBoostingFeatures\\n."
+    )
+    assert restored_class is BoostingFeatures
