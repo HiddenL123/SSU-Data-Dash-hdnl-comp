@@ -217,6 +217,6 @@ def test_frozen_pickle_resolves_legacy_gb_features_global():
 
     # Protocol-0 GLOBAL opcode, as if persisted before models/legacy moved.
     restored_class = pickle.loads(
-        b"cmodels.legacy.gb_features\\nBoostingFeatures\\n."
+        b"cmodels.legacy.gb_features\nBoostingFeatures\n."
     )
     assert restored_class is BoostingFeatures
