@@ -3,8 +3,12 @@
 ## Long-run dual-track training (this branch)
 
 Use `train_longrun.py` for a new, resume-safe, larger off-market and list-aware
-ensemble search. See [TRAIN_LONGRUN.md](TRAIN_LONGRUN.md) for PowerShell
-commands, checkpoint paths, increasing generations, and separate audit/finalization.
+ensemble search. The `run` command **automatically audits each finished
+track and exports portable checkpoint ZIPs plus checksums** to
+`colab_checkpoints/dual_track_longrun_v2/`. Send those four files back for
+review and later finalization; no separate export command is required.
+See [TRAIN_LONGRUN.md](TRAIN_LONGRUN.md) for PowerShell commands, checkpoint
+paths, and the optional selection-only mode when extending generations.
 
 ```powershell
 uv run --with optuna python train_longrun.py run --track both --generations 12 --optuna-trials 8 --threads 8
