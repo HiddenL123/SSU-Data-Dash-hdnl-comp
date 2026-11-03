@@ -8,7 +8,7 @@ checkpoints; it never changes model-selection/audit boundaries.
 Examples (PowerShell):
   uv run --with optuna python train_longrun.py run --track both
   uv run python train_longrun.py status --track both
-  uv run --with optuna python train_longrun.py run --track list_aware --generations 20
+  uv run --with optuna python train_longrun.py run --track list_aware --generations 20 --no-auto-audit
   uv run --with optuna python train_longrun.py audit --track list_aware
   uv run --with optuna python train_longrun.py finalize --track list_aware
 """
@@ -45,7 +45,11 @@ def parser_for_cli():
     parser.add_argument("--threads", type=int, default=8,
                         help="CPU threads per model (may change on resume)")
     parser.add_argument("--checkpoint-dir", default=None,
-                        help="Optional OUTSIDE the experiment: write per-track portable ZIP and .sha256 after checkpoints")
+                        help="Optional OUTSIDE the experiment: also export ZIP and .sha256 after each training checkpoint (more disk I/O)")
+    parser.add_argument("--export-dir", default="colab_checkpoints/dual_track_longrun_v2",
+                        help="Where to automatically export one portable ZIP + .sha256 per track after run/audit")
+    parser.add_argument("--no-auto-audit", action="store_true",
+                        help="Run selection and export only; leave audit unopened so you can extend generations later")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print configuration and checkpoint state without loading data or training")
     return parser
@@ -81,6 +85,30 @@ def checkpoint_for(track, args):
     return Path(args.checkpoint_dir) / f"{track}_checkpoint.zip"
 
 
+def export_completed_checkpoint(track, args, experiment_dir):
+    """Export a portable, checksum-protected snapshot after selection/audit.
+
+    The archive is distinct from local live checkpoints. It excludes raw
+    listings and fitted model.joblib; final fitting remains a separate step.
+    """
+    from models.automl_portable import export_checkpoint
+
+    destination = Path(args.export_dir) / f"{track}_checkpoint.zip"
+    source = Path(experiment_dir).resolve()
+    target = destination.resolve()
+    if target == source or source in target.parents:
+        raise ValueError(
+            "--export-dir must be outside the active experiment directory"
+        )
+    created = export_checkpoint(source, target)
+    checksum = created.with_name(created.name + ".sha256")
+    if not created.is_file() or not checksum.is_file():
+        raise RuntimeError(f"Incomplete checkpoint export: {created}")
+    print(f"[{track}] SEND: {created}", flush=True)
+    print(f"[{track}] SEND: {checksum}", flush=True)
+    return created, checksum
+
+
 def show_state(track, args):
     from dataclasses import asdict
     settings = settings_for(track, args)
@@ -91,7 +119,9 @@ def show_state(track, args):
           f"{settings.candidates_per_generation}, Optuna trials={settings.optuna_trials}, "
           f"trees={settings.trees}, max members={settings.max_members}")
     print(f"  threads: {args.threads}")
-    print(f"  optional portable checkpoint: {checkpoint_for(track, args) or '(disabled; local resume still enabled)'}")
+    print(f"  optional ongoing checkpoint: {checkpoint_for(track, args) or '(disabled; local resume still enabled)'}")
+    print(f"  automatic ZIP export: {Path(args.export_dir) / (track + '_checkpoint.zip')}")
+    print(f"  audit after run: {'disabled (selection only)' if args.no_auto_audit else 'automatic'}")
     manifest_file = root / "manifest.json"
     if manifest_file.is_file():
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
@@ -136,7 +166,14 @@ def train_one(track, args):
         outcome, _, _ = factory.run()
         print(f"[{track}] selection metrics: {outcome['selection_metrics']}", flush=True)
         print(f"[{track}] selected weights: {outcome['effective_member_weights']}", flush=True)
-        print(f"[{track}] audit remains separate. Run the 'audit' command AFTER selection.", flush=True)
+        if args.no_auto_audit:
+            print(f"[{track}] audit NOT opened; generations can still be extended.", flush=True)
+        else:
+            # Only audit a completed selection. The factory locks the frozen
+            # roster before exposing audit predictions; never extend afterward.
+            report, _ = factory.audit()
+            print(f"[{track}] frozen audit: {report['shadow_audit_metrics']}", flush=True)
+        export_completed_checkpoint(track, args, settings.output_dir)
     elif args.command == "audit":
         if track == "off_market":
             from models.ensemble_automl_factory import FactoryRun
@@ -146,6 +183,7 @@ def train_one(track, args):
                              checkpoint_archive=checkpoint)
         report, _ = factory.audit()
         print(f"[{track}] frozen audit: {report['shadow_audit_metrics']}", flush=True)
+        export_completed_checkpoint(track, args, settings.output_dir)
     elif args.command == "finalize":
         if track == "off_market":
             from models.ensemble_release_candidate import finalize_release
@@ -188,6 +226,9 @@ def main(argv=None):
             ]
             if args.checkpoint_dir is not None:
                 command.extend(["--checkpoint-dir", args.checkpoint_dir])
+            command.extend(["--export-dir", args.export_dir])
+            if args.no_auto_audit:
+                command.append("--no-auto-audit")
             print(f"\n=== {args.command.upper()} {track} ===", flush=True)
             subprocess.run(command, check=True)
     else:
