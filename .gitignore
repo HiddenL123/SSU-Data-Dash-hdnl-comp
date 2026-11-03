@@ -14,3 +14,7 @@ venv/
 .DS_Store
 .Rhistory
 report/*.pdf
+
+# Resumable portable archives and local pytest scratch files
+colab_checkpoints/
+pytest_tmp/
