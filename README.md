@@ -1,5 +1,19 @@
 # SSU Data Dash: predict Toronto home prices
 
+## Long-run dual-track training (this branch)
+
+Use `train_longrun.py` for a new, resume-safe, larger off-market and list-aware
+ensemble search. See [TRAIN_LONGRUN.md](TRAIN_LONGRUN.md) for PowerShell
+commands, checkpoint paths, increasing generations, and separate audit/finalization.
+
+```powershell
+uv run --with optuna python train_longrun.py run --track both --generations 12 --optuna-trials 8 --threads 8
+```
+
+The existing finalized inference runner and model artifacts are not modified
+by this research branch.
+
+
 Start with the case handout, [`handout.md`](handout.md), and the judging rubric, [`rubric.md`](rubric.md).
 
 Two tracks:
